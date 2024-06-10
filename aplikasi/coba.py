@@ -1,1105 +1,1663 @@
 import tkinter as tk
-from tkinter import *
-from tkinter import messagebox
-from PIL import ImageTk, Image
+from tkinter import messagebox, ttk
+import mysql.connector
+from PIL import Image, ImageTk
+import io
 import matplotlib.pyplot as plt
-import mysql.connector as sql
-from tkinter.simpledialog import askstring
-from functools import reduce
-import smtplib
-import re
-import time
-from pymongo import MongoClient
-import turtle
-import random
-import xlsxwriter
-import openpyxl
-from reportlab.pdfgen import canvas
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.pdfmetrics import stringWidth
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter,inch
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import mm
-from reportlab.platypus import Paragraph, Table
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import requests
+import qrcode
+import base64
+import datetime
 
+class DatabaseManager:
+	def __init__(self, host, port, username, password, database):
+		self.conn = None
+		self.cursor = None
+		self.host = host
+		self.port = port
+		self.username = username
+		self.password = password
+		self.database = database
 
+	def connect(self):
+		try:
+			self.conn = mysql.connector.connect(
+				host=self.host,
+				port=self.port,
+				user=self.username,
+				password=self.password,
+				database=self.database,
+			)
+			self.cursor = self.conn.cursor()
+			print("Connected to database successfully.")
+		except mysql.connector.Error as e:
+			print("Error:", e)
 
-count = 1
-backcount = 0
-accounts = []
+	def disconnect(self):
+		try:
+			if self.conn:
+				self.conn.close()
+				print("Disconnected from database.")
+		except mysql.connector.Error as e:
+			print("Error:", e)
 
+	def insert_order(self, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan):
+		query = """
+        INSERT INTO ringkasan_pesanan 
+        (nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """
+		values = (nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan)
+		try:
+			self.cursor.execute(query, values)
+			self.conn.commit()
+			print("Order inserted successfully.")
+		except mysql.connector.Error as e:
+			print("Error:", e)
 
+	def insert_menu(self, nama_minuman, harga, gambar_minuman, deskripsi):
+		try:
+			self.connect()
+			self.cursor.execute('''INSERT INTO menu (nama_minuman, harga, gambar_minuman, deskripsi) 
+                                VALUES (%s, %s, %s, %s)''', (nama_minuman, harga, gambar_minuman, deskripsi))
+			self.conn.commit()
+			print("Menu item inserted successfully.")
+		except mysql.connector.Error as e:
+			print("Error:", e)
+		finally:
+			self.disconnect()
 
-class Login():
+	def get_menu_from_database(self):
+		menu = []
+		try:
+			self.connect()
+			self.cursor.execute("SELECT nama_minuman, harga, gambar_minuman, deskripsi FROM menu")
+			rows = self.cursor.fetchall()
 
-	def __init__(self):
-		self.email = ""
-		self.name = ""
-		self.line = None
-		self.keep_logged_in = 0
+			for row in rows:
+				menu.append({
+					"nama_minuman": row[0],
+					"harga": row[1],
+					"gambar_minuman": row[2],
+					"deskripsi": row[3]
+				})
+			print("Menu data retrieved successfully.")
+		except mysql.connector.Error as e:
+			print("Error:", e)
+		finally:
+			if self.conn:
+				self.disconnect()
+		return menu
 
-	def drive_ret(self):
-		global accounts
-		accounts = list(map(lambda item: list(item.values()), records.find()))
-		
+	def get_menu_items(self):
+		menu_items = {}
+		try:
+			self.connect()
+			self.cursor.execute("SELECT nama_minuman, harga FROM menu")
+			rows = self.cursor.fetchall()
+			for row in rows:
+				menu_items[row[0]] = row[1]
+			print("Menu items retrieved successfully.")
+		except mysql.connector.Error as e:
+			print("Error:", e)
+		finally:
+			self.disconnect()
+		return menu_items
 
-	def sign_in_check(self):
-		global accounts
-		self.drive_ret()
+API_KEY = 'xnd_development_KQmfElKh3di1BvU2zs369Lx5iIU71CPcLnHNwiAe5Nqo8Gpsi6AEfIrMuFVUF8V'
 
-		flag = False
+class App:
+	def __init__(self, root):
+		self.root = root
+		self.counts = {}
+		self.tree = None
+		self.ringkasan_pesanan = []
+		self.order = {}
+		self.previous_order_quantities = {}
+		self.menu = None
+		self.cart_frame = None
+		self.total_price_label = None
+		self.last_frame = None
+		self.menu_frame = None
+		self.old_ringkasan_pesanan = None
+		self.order_summary_frame = None
+		self.rasa_var1 = tk.StringVar()
+		self.rasa_var2 = tk.StringVar()
+		self.persentase_var = tk.StringVar()
+		self.db_manager = DatabaseManager('127.0.0.1', 3306, 'root', '', 'pemesanan_minuman')
+		self.total_price = 0
+		self.user_logged_in = False
+		self.admin_logged_in = False
+		self.old_order = {}
+		self.cart_quantities = {}
 
-		if (accounts != None and accounts != []):
-			with open("logged_in.txt","r") as emailfile:
-				eml=emailfile.read()
+		# Koneksi ke database dan ambil data menu
+		self.db_manager.connect()
+		query = "SELECT nama_minuman, harga, gambar_minuman, deskripsi FROM menu"
+		self.db_manager.cursor.execute(query)
+		menu_data = self.db_manager.cursor.fetchall()
+		self.db_manager.disconnect()
 
-			for i in range(0, len(accounts), 1):
+		# Inisialisasi menu dengan data yang diambil dari database
+		self.initialize_menu(menu_data)
 
-				if (accounts[i][1] == eml):
-					flag = True
-					self.email = accounts[i][1]
-					self.line = i
+		self.root.title("Aplikasi Pemesanan Minuman")
+		self.create_login_page()
 
-					self.name = accounts[i][2]
+	def show_detail(self, data):
+		# Tampilkan detail minuman dalam pop-up window
+		detail_window = tk.Toplevel(self.root)
+		detail_window.title("Detail Minuman")
 
-		if (accounts == None or accounts == False or flag == False):
-			self.page1()
+		# Tampilkan informasi detail minuman
+		detail_label = tk.Label(detail_window, text=f"Harga: {data['harga']}\nDeskripsi: {data['deskripsi']}")
+		detail_label.pack()
 
-	def Forgot_Password(self):
+		# Tampilkan gambar minuman
+		image = Image.open(data["gambar"]).resize((200, 200))  # Menggunakan kunci "gambar"
+		photo = ImageTk.PhotoImage(image)
+		image_label = tk.Label(detail_window, image=photo)
+		image_label.image = photo
+		image_label.pack()
 
-		def part2():
+	def initialize_menu(self, menu_data):
+		# Inisialisasi menu_items sebagai kamus kosong
+		menu_items = {}
 
-			global win5
-			win5 = tk.Tk()
-			#            win5.iconbitmap('Logo.ico')
-			win5.title("Account recovery")
-			win5.geometry("200x200")
-			win5.config(bg="Turquoise")
-			Label(win5, text="Enter the new password").place(x=40, y=10)
-			global ent3
-			ent3 = Entry(win5, width=15)
-			ent3.place(x=40, y=50)
-			tk.Button(win5, text="Submit", command=lambda: getem(2)).place(x=70, y=100)
-			win5.mainloop()
+		# Iterasi melalui setiap item dalam menu_data
+		for item in menu_data:
+			# Ekstrak informasi masing-masing item
+			nama_minuman, harga, gambar_minuman, deskripsi = item
 
-		def getem(step):
-			global accounts
+			# Tambahkan item ke dalam menu_items dengan nama minuman sebagai kunci
+			menu_items[nama_minuman] = {
+				"harga": harga,
+				"gambar": gambar_minuman,
+				"deskripsi": deskripsi
+			}
 
-			if (step == 1):
-				global var1, var2
-				s = smtplib.SMTP('smtp.gmail.com', 587)
-				global count
-				if (count == 1):
-					count += 1
-					var1 = ent1.get()
-					s.starttls()
-					s.login("instafoodalp@gmail.com", "alpine2003$")
+		# Atur atribut menu dengan menu_items yang telah diinisialisasi
+		self.menu = menu_items
 
-					message = f"Account Recovery\nYour otp is {otp}"
-					s.sendmail("instafoodalp@gmail.com", var1, message)
-					s.quit()
-					s.close()
-					tk.Button(win4, text="Submit", padx=10, pady=10, command=lambda: getem(1)).place(x=220, y=100)
-				elif (count == 2):
-					var2 = ent2.get()
-					var2 = var2.strip(" ")
+	# -----------------------------------------------------------LOGIN---------------------------------------------------------------------
 
-					if (str(otp) != var2):
+	def create_login_page(self):
+		self.destroy_last_frame()
 
-						win4.destroy()
-						self.Forgot_Password()
-					else:
+		self.login_frame = tk.Frame(self.root, bg='lightblue')
+		self.login_frame.pack(expand=True, fill='both')
 
-						win4.destroy()
-						part2()
+		welcome_label = tk.Label(self.login_frame, text="SELAMAT DATANG", font=("Helvetica", 30, "bold"), bg='lightblue')
+		welcome_label.pack(pady=(250, 20))
 
-			elif (step == 2):
-				global var3
+		self.username_entry = tk.Entry(self.login_frame, font=("Helvetica", 20))
+		self.username_entry.insert(0, "user")
+		self.username_entry.pack(pady=10)
 
-				var3 = ent3.get()
-				if (accounts != None and accounts != False):
-					records.update_one({"email": var1}, {'$set': {'password': var3}})
-					accounts = list(map(lambda item: list(item.values()), records.find()))
-				else:
-					r=Tk()
-					r.withdraw()
-					messagebox.showerror("Pop-Up","No account exist.")
-					r.destroy()
-					self.page1()
-				win5.destroy()
+		self.password_entry = tk.Entry(self.login_frame, show="*", font=("Helvetica", 20))
+		self.password_entry.insert(0, "user123")
+		self.password_entry.pack(pady=10)
 
-		count = 1
-		win4 = tk.Tk()
-		win4.title("Account recovery")
-		win4.iconbitmap('Logo.ico')
-		win4.geometry("320x170")
-		win4.config(bg="Turquoise1")
-		otp = random.randint(1000, 9999)
+		login_button = tk.Button(self.login_frame, text="LOGIN", command=self.login, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		login_button.pack(pady=20)
 
-		Label(win4, text="Enter the email . Otp will be sent to your email address", font=("Times New Roman", 10),
-			  bg="Turquoise1").place(x=10, y=10)
-		Label(win4, text="Email").place(x=15, y=40)
-		Label(win4, text="Enter Otp").place(x=15, y=80)
+		self.last_frame = self.login_frame
 
-		ent1 = Entry(win4, width=30)
-		ent1.place(x=80, y=40)
+	def login(self):
+		username = self.username_entry.get()
+		password = self.password_entry.get()
 
-		ent2 = Entry(win4, width=10)
-		ent2.place(x=80, y=80)
-		Button(win4, text="Submit", padx=10, pady=10, command=lambda: getem(1)).place(x=220, y=100)
-
-		win4.mainloop()
-
-	def signin_up(self, case, page):
-		global win2
-		win2 = tk.Toplevel()
-		win2.iconbitmap('Logo.ico')
-		if (page == 1):
-			var = StringVar()
-			var.set("Email")
-			sct = Image.open("scooter.jpg")
-			sct = sct.resize((250, 250))
-			sctphoto = ImageTk.PhotoImage(sct)
-			sctlabel = tk.Label(win2, image=sctphoto)
-			sctlabel.place(x=0, y=0)
-
-		elif (page == 2):
-			var = StringVar()
-			var.set(log.email)
-
-		win2.title("Instafood ->> Sign Up")
-		win2.geometry("250x255")
-
-		if (case == 1 and page == 1):
-			Button(win2, text="Forgot Password?", bg="pink1", command=lambda: self.Forgot_Password()).place(
-				x=15, y=155)
-
-		tk.Label(win2, textvariable=var).place(x=10, y=30)
-		Label(win2, text="Password").place(x=10, y=70)
-
-		global n2, a2, p2
-
-		if (page == 1):
-			global e2, checkbox, selected_option
-
-			selected_option = IntVar()
-			checkbox = tk.Checkbutton(win2, onvalue=1, offvalue=0, bg="pink1", text="Keep me signed in ",variable=selected_option)
-			checkbox.place(x=15, y=195)
-			e2 = tk.Entry(win2)
-			e2.place(x=70, y=30)
-			Button(win2, text="\nSubmit\n", bg="pink1", command=lambda: self.collectdata(case)).place(x=180,y=160)
-		elif (page == 2):
-			Button(win2, text="\nSubmit\n", bg="pink1", command=lambda: home.collect()).place(x=180, y=160)
-
-		n2 = tk.Entry(win2)
-		a2 = tk.Entry(win2)
-
-		if (case == 2):
-			Label(win2, text="Name").place(x=10, y=110)
-
-			Label(win2, text="Pincode").place(x=10, y=150)
-
-			n2.place(x=70, y=110)
-			a2.place(x=70, y=150)
-
-		p2 = tk.Entry(win2)
-
-		p2.place(x=70, y=70)
-
-		win2.mainloop()
-
-	def collectdata(self, num):
-		global li, n
-		n = num
-		l = [e2, p2, n2, a2]
-		li = [l[i].get() for i in range(0, 2 * num)]
-		li.append(selected_option.get())
-
-		self.email = e2.get()
-		self.name = n2.get()
-		self.keep_logged_in = selected_option.get()
-
-		win2.destroy()
-		win1.destroy()
-
-	def page1(self):
-		global win1
-		win1 = tk.Tk()
-		win1.iconbitmap('Logo.ico')
-		win1.geometry("500x430")
-		win1.title("Instafood.com")
-
-		back = Image.open("food.png").resize((500, 420))
-		backphoto = ImageTk.PhotoImage(back)
-		background_img = Label(win1, image=backphoto)
-		background_img.place(x=0, y=0)
-
-		Welcome_label = Label(win1, text="Welcome!", font=('Lucida Calligraphy', 30), bg="black", fg="white")
-		Welcome_label.place(x=30, y=30)
-
-		logo = Image.open("instafood.png")
-		logo = logo.resize((200, 250))
-		logophoto = ImageTk.PhotoImage(logo)
-		logolabel = Label(win1, image=logophoto)
-		logolabel.place(x=250, y=80)
-
-		Button(win1, text="\n\tSign In\t\t\n", command=lambda: self.signin_up(1, 1)).place(x=50, y=130)
-		Button(win1, text="\n\tSign Up\t\t\n", command=lambda: self.signin_up(2, 1)).place(x=50, y=230)
-
-		win1.mainloop()
-
-		result = re.match('[0-9a-z]+@[a-z]+\.[a-z]+', li[0])
-
-		if (result == None):
-			r=Tk()
-			r.withdraw()
-			messagebox.showerror("Pop-Up","Email-Id entered is In-valid.")
-			r.destroy()
-			self.page1()
+		if username == "user" and password == "user123":
+			self.user_logged_in = True
+			try:
+				self.db_manager = DatabaseManager('127.0.0.1', 3306, 'root', '', 'pemesanan_minuman')
+				messagebox.showinfo("Login Success", "Berhasil login sebagai user.")
+				self.create_user_welcome_page()
+			except Exception as e:
+				messagebox.showerror("Database Connection Error", f"Gagal terhubung ke database: {str(e)}")
+			finally:
+				self.db_manager.disconnect()  # Pastikan untuk menutup koneksi setelah digunakan
+		elif username == "admin" and password == "admin123":
+			self.admin_logged_in = True
+			try:
+				self.db_manager = DatabaseManager('127.0.0.1', 3306, 'root', '', 'pemesanan_minuman')
+				messagebox.showinfo("Login Success", "Berhasil login sebagai admin.")
+				self.create_admin_welcome_page()
+			except Exception as e:
+				messagebox.showerror("Database Connection Error", f"Gagal terhubung ke database: {str(e)}")
+			finally:
+				self.db_manager.disconnect()  # Pastikan untuk menutup koneksi setelah digunakan
 		else:
-			li[0] = li[0].strip('\n')
-			self.emailprocess(li, n)
+			messagebox.showerror("Login Failed", "Nama pengguna atau kata sandi salah.")
 
-	def emailprocess(self, details, cond):
-		global accounts
+	def logout(self):
+		self.user_logged_in = False
+		self.db_manager.disconnect()  # Pastikan untuk menutup koneksi setelah logout
+		self.create_login_page()
 
-		if (cond == 1):
+	# -----------------------------------------------------------ADMIN---------------------------------------------------------------------
 
-			flag = False
-			for i in range(0, len(accounts), 1):
-				if (accounts[i][1] == details[0]):
-					if (accounts[i][2] == details[1]):
-						self.line = i
-						flag = True
+	def create_admin_welcome_page(self):
+		self.destroy_last_frame()
 
-			if (flag == True and self.keep_logged_in == 1):
-				with open("logged_in.txt","w") as emailfile:
-					eml=emailfile.write(self.email)
+		if self.admin_logged_in:
+			self.admin_welcome_frame = tk.Frame(self.root, bg='lightblue')
+			self.admin_welcome_frame.pack(expand=True, fill='both')
 
-			if (flag == False):
-				r=Tk()
-				r.withdraw()
-				messagebox.showerror("Pop-Up","No account created with this EmailID.Please Sign Up to continue or Re-enter the Email-Id and password.")
-				r.destroy()
-				self.page1()
+			welcome_label = tk.Label(self.admin_welcome_frame, text="WELCOME ADMIN", font=("Helvetica", 30, "bold"), bg='lightblue')
+			welcome_label.pack(pady=(300, 20))
 
-		if (cond == 2):
-			flag = False
+			enter_button = tk.Button(self.admin_welcome_frame, text="ENTER", command=self.create_admin_page, bg='orange',
+									 font=("Helvetica", 20, "bold"), padx=10, pady=5)
+			enter_button.pack(pady=20)
 
-			if (accounts != False and accounts != None):
+			# Load gambar logout
+			logout_image = tk.PhotoImage(file="assets/logout.png")  # Ganti dengan path file gambar logout yang sebenarnya
+			logout_image_resized = logout_image.subsample(5, 5)
 
-				for i in range(0, len(accounts), 1):
-					if (accounts[i][1] == details[0]):
-						flag = True
-						r=Tk()
-						r.withdraw()
-						messagebox.showerror("Pop-Up","An account already exists with this Email Id. Please sign in to contiue. Click Forgot Password to retrieve the password.")
-						r.destroy()
-						self.page1()
+			# Buat tombol logout dengan gambar yang telah diubah ukurannya
+			logout_button = tk.Button(self.admin_welcome_frame, image=logout_image_resized, command=self.logout, bg='lightblue', bd=0)
+			logout_button.image = logout_image_resized  # Penting untuk mempertahankan referensi gambar yang diubah ukurannya
+			logout_button.pack(side="left", anchor="sw", padx=20, pady=20)  # Meletakkan tombol di bawah kiri
+		else:
+			self.create_login_page()  # Halaman login harus dibuat jika tidak ada admin yang login
 
-			if (accounts == False or flag == False or accounts == [[]]):
-				with open("logged_in.txt","w") as emailfile:
-					if(self.keep_logged_in==1):
-						eml=emailfile.write(self.email)
-					else:
-						pass
-				fields = ["email", 'password', "name", "address"]
-				new_user = {value: details[i] for i, value in enumerate(fields)}
-				new_user["orders"]=[]
-				records.insert_one(new_user)
+		self.last_frame = self.admin_welcome_frame
 
+	def create_admin_page(self):
+		self.destroy_last_frame()
 
-class Homepage(Login):
-	global cart
-	global start
-	global currentpos
-	cart = {}
-	start = 0
-	currentpos = 0
+		self.admin_frame = tk.Frame(self.root, bg='lightblue')
+		self.admin_frame.pack(expand=True, fill='both')
 
-	def suggestions(self):
-		global framesug
-		def prevord(ordli,num):
-			x=num
-			for i in range(len(ordli)-1+num,-1,-1):
-				if(ordli[i][0]!=ordli[x][0]):
-					num=i
-					break
-			lis.append(-(len(ordli)-num))
-			return -(len(ordli)-num)
+		title_label = tk.Label(self.admin_frame, text="Admin Page", font=("Helvetica", 24, "bold"), bg='lightblue')
+		title_label.pack(pady=(50, 20))
 
-		try:
-			dic=records.find_one({"email": log.email})
-			ordli=dic["orders"]
-			Label(framesug,bg="lightyellow",text="Based on your previous orders", fg="SlateBlue2", font=("Times New Roman", 15)).place(x=110,y=0)
-			Label(framesug,bg="lightyellow",text="Food\t\t   Restaurant\t\tPrice").place(x=80,y=30)
-			
-			num=-1
-			lis=[-1]
+		add_menu_button = tk.Button(self.admin_frame, text="Add Menu", command=self.add_menu_page, bg='orange',
+									font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		add_menu_button.pack(pady=20)
 
-			Label(framesug,bg="lightyellow",text=str(ordli[num][0]+"\t  "+ordli[num][1]+"\t\t"+str(ordli[num][2]))).place(x=80,y=50)
-			Button(framesug,command=lambda:self.orderagain(lis[0]),text="Order1",bg="Orange").place(x=10,y=50)
-			num=prevord(ordli,num)
+		view_menu_button = tk.Button(self.admin_frame, text="View Menu", command=self.view_menu, bg='orange',
+									 font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		view_menu_button.pack(pady=20)
 
-			Label(framesug,bg="lightyellow",text=str(ordli[num][0]+"\t  "+ordli[num][1]+"\t\t"+str(ordli[num][2]))).place(x=80,y=90)
-			Button(framesug,command=lambda:self.orderagain(lis[1]),text="Order2",bg="Orange").place(x=10,y=90)
-			num=prevord(ordli,num)
+		delete_menu_button = tk.Button(self.admin_frame, text="Delete Menu", command=self.delete_menu_page, bg='orange',
+									   font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		delete_menu_button.pack(pady=20)
 
-			Label(framesug,bg="lightyellow",text=str(ordli[num][0]+"\t  "+ordli[num][1]+"\t\t"+str(ordli[num][2]))).place(x=80,y=130)
-			Button(framesug,command=lambda:self.orderagain(lis[2]),text="Order3",bg="Orange").place(x=10,y=130)
-		except:
-			pass
+		view_sales_button = tk.Button(self.admin_frame, text="View Sales Data", command=self.view_sales_data, bg='orange',
+									  font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		view_sales_button.pack(pady=20)
 
-	def orderagain(self,ordnum):
+		back_button = tk.Button(self.admin_frame, text="Back", command=self.create_admin_welcome_page, bg='orange',
+								font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		back_button.pack(pady=20)
 
-		ordlist=accounts[log.line][5][ordnum]
-		FoodName=ordlist[0]
-		rest=ordlist[1]
-		cusine=ordlist[4]
-		price=ordlist[2]
-		qty = 1
-		r = len(rest)
-		f = len(FoodName)
+		self.last_frame = self.admin_frame
 
-		FoodId = cusine[0:3] + FoodName[0:2] + FoodName[f - 2:f] + rest[0:2] + rest[r - 2:r]
-		if(FoodId not in cart):
-			cart[FoodId] = (FoodName, price, qty)
-		elif(cart[FoodId][2]<7):
-			cart[FoodId] = (FoodName, price, qty+1)
-		#FoodName, price, rest, cus
+	def delete_menu_page(self):
+		self.destroy_last_frame()
 
+		# Create delete menu frame
+		delete_menu_frame = tk.Frame(self.root, bg='lightblue')
+		delete_menu_frame.pack(expand=True, fill='both')
 
-	def addorder(self,ordli):
-		global accounts
-		try:
-			accounts[log.line][5].append(ordli)
-			li=accounts[log.line][5]
-		except:
-			accounts[0][5].append(ordli)
-			li=accounts[0][5]
+		# Title label
+		title_label = tk.Label(delete_menu_frame, text="Delete Menu", font=("Helvetica", 24, "bold"), bg='lightblue')
+		title_label.pack(pady=(50, 20))
 
-		
-		orde={"orders": li }
+		# Content frame
+		content_frame = tk.Frame(delete_menu_frame, bg='lightblue')
+		content_frame.pack(expand=True, fill='both')
 
-		records.update_one({"email":log.email}, {'$set': orde})
+		# Connect to the database
+		self.db_manager.connect()
 
-	def statistics(self):
-		global accounts
-		sizes=[0,0,0,0,0,0,0,0]
-		labels = ["Chinese", "South Indian", "North Indian", "Desserts", "Beverages", "Fast Food", "Snacks", "Italian"]	
-		try:
-			for i,acclist in enumerate(accounts):
-				for j in acclist[5]:
-					cus=j[4]
-					sizes[labels.index(cus)]+=1
-		except :
-			pass
+		# Retrieve menu data from the database
+		query = "SELECT nama_minuman, harga, gambar_minuman FROM menu"
+		self.db_manager.cursor.execute(query)
+		menu_data = self.db_manager.cursor.fetchall()
 
-		add=reduce(lambda acc,item: acc+item ,sizes)
+		# Disconnect from the database
+		self.db_manager.disconnect()
 
-		size=[(float(i/add)*100) for i in sizes]
+		if not menu_data:
+			no_menu_label = tk.Label(content_frame, text="No menu available", font=("Helvetica", 16), bg='lightblue')
+			no_menu_label.pack(pady=20)
+		else:
+			for i, (nama_minuman, harga, gambar_minuman) in enumerate(menu_data):
+				row_number = i // 5  # Setiap baris akan berisi maksimal 5 item
+				col_number = i % 5   # Setiap item akan ditempatkan di kolom yang sesuai dengan indeksnya
 
-		sizelables = [str(str(val)+"%") for val in size]
-
-		colors = ['yellowgreen', 'gold', 'lightskyblue', 'lightcoral',"yellow","pink","orange","palegreen"]
-		text = []
-		patch, text = plt.pie(sizes, labels=sizelables, colors=colors, startangle=90)
-		plt.axis('equal')
-		plt.legend(patch, labels, loc=(0,0))
-
-		plt.show()
-
-	def order_page(self):
-		def get_data():
-			global data
-			data = variable.get()
-			variable.set("Home")
-			if (data == "Edit Profile"):
-				self.edit_profile()
-			elif (data == "Sign Out"):
-				self.Sign_Out()
-			elif (data == "Track My order"):
-				trans.time_calc()
-				trans.tracker()
-			elif (data == "Home"):
-				pass
-			elif (data == "Popularity"):
-				self.statistics()
-			elif (data == "About Us"):
-				self.info()
-
-		global backcount
-
-		global win3
-		if (backcount == 0):
-			win3 = tk.Tk()
-			win3.iconbitmap('Logo.ico')
-			win3.geometry("500x550")
-			win3.title("Instafood >> Order")
-			win3.configure(bg="pale green")
-		backcount += 1
-		global frame1
-		frame1 = Frame(win3, bg="lightyellow", width=500, height=100)
-		frame1.pack(side=LEFT)
-		frame1.place(x=0, y=0)
-		Label(frame1, text="ORDER", bg="lightyellow", fg="SlateBlue2", font=("Times New Roman", 20)).place(x=200, y=0)
-
-		Label(frame1, text="Options", padx=15, pady=5, bg="turquoise1").place(x=5, y=5)
-		OptionList = ["Home", "My Orders", "Track My order", "Popularity", "Edit Profile", "Sign Out", "About Us"]
-		variable = tk.StringVar(frame1)
-		variable.set("Home")
-		opt = tk.OptionMenu(frame1, variable, *OptionList)
-		opt.config(width=15, bg="turquoise1")
-		opt.place(x=5, y=50)
-		Button(frame1, text="click me to perform action", bg="orange", command=lambda: get_data()).place(x=150, y=52)
-
-		logo = Image.open("Logo.ico")
-		logo = logo.resize((120, 120))
-		logophoto = ImageTk.PhotoImage(logo)
-		logolabel = Label(frame1, image=logophoto, bg="lightyellow")
-		logolabel.place(x=350, y=0)
-
-		global framesug
-		framesug=Frame(win3,bg="lightyellow",width=500,height=200)
-		framesug.place(x=0,y=390)
-
-		self.suggestions()
-
-		self.FoodData()
-		self.Database()
-		win3.mainloop()
-
-	def edit_profile(self):
-
-		self.signin_up(2, 2)
-
-	def collect(self):
-		global p2, n2, a2
-
-		upd = {'password': p2.get(), "name": n2.get(), "address": a2.get()}
-		records.update_one({"email": log.email}, {'$set': upd})
-		global win2
-		win2.destroy()
-
-	def Sign_Out(self):
-		with open("logged_in.txt","w") as emailfile:
-			pass
-		win3.destroy()
-                          
-	def info(self):
-
-		top = Tk()  
-		top.geometry("515x343")
-		var = StringVar()  
-		msg = Message( top, text ="""About Us:\nWhat is InstaFood's Story? How did it all begin?\nAn avocational project created and excecuted with the help of three main individuals Achintya,Allen and Surya.\nInstafood is an online food ordering and delivery platform currently serving in India.
-			\nThe innovative technology, large and nimble delivery service,and exceptional customer focus at Instafood enables a host of benefits that includes lightning fast deliveries, live order tracking and no limit on order amount, 
-			all while having the pleasure of enjoying your favourite meal wherever you'd like it from wherever you want.\n The Instafood project was initiated on May 2020 to ensure no one goes hungry during the lockdown.
-			\nAs we progress through time, we keenly look forward to spread our horizons with your help.\nThank You for all your help:)""",relief=SUNKEN,bg="black",fg="white",font="Courier")  
-		msg.pack()  
-		top.mainloop()  
-
-	def FoodData(self):
-		foodlist = [['Paneer Dosa', 'South Indian', 'Dosa and Idly', 'Bangalore Dosa Co.', '125', ''],
-					['Onion Chilli Cheese Dosa', 'South Indian', 'Dosa and Idly', 'Bangalore Dosa Co.', '125', ''],
-					['Spinach Corn Cheese Dosa', 'South Indian', 'Dosa and Idly', 'Bangalore Dosa Co.', '150', ''],
-					['Andhra Chilli Potato Fry Dosa', 'South Indian', 'Dosa and Idly', 'Bangalore Dosa Co.', '125', ''],
-					['Gulab Jamun', 'Desserts', 'Indian', 'Bangalore Dosa Co.', '50', ''],
-					['Panneer Paratha', 'North Indian', 'Paratha', 'Paratha Envy', '143', ''],
-					['Rabdii', 'Desserts', 'Indian', 'Paratha Envy', '40', ''],
-					['Aloo Paratha Combo', 'North Indian', 'Paratha', 'Paratha Envy', '140', ''],
-					['Chicken Manchurian', 'Chinese', 'Starters', 'BeijingBites', '240', 'FALSE'],
-					['Veg Schezwan Fried Rice', 'Chinese', 'Fried Rice', 'BeijingBites', '150', ''],
-					['Hong Kong Chicken', 'Chinese', 'Main Course', 'BeijingBites', '200', 'FALSE'],
-					['Margherita-Small', 'Italian', 'Pizza', 'Pizza Hut', '120', ''],
-					['Choco Volcano Treat Pack-2pcs', 'Desserts', '', 'Pizza Hut', '100', ''],
-					['Pepsi Pet Bottle', 'Beverages', 'Soft Drink', 'Pizza Hut', '60', ''],
-					['Spanish Tomato Veg Pasta', 'Italian', 'Pasta', 'Pizza Hut', '170', ''],
-					['Chicken Tikka (Personal)', 'Italian', 'Pizza', 'Pizza Hut', '370', 'FALSE'],
-					['Triple Chicken Feast New (Personal)', 'Italian', 'Pizza', 'Pizza Hut', '400', 'FALSE'],
-					['Garlic Breadstix', 'Fast Food', '', 'Pizza Hut', '100', ''],
-					['Idli (2pcs)', 'South Indian', 'Dosa and Idly', 'Sagar Fast Food', '24', ''],
-					['Vada(1pc)', 'South Indian', 'South Indian Specialites', 'Sagar Fast Food', '24', ''],
-					['Rava Idly', 'South Indian', 'Dosa and Idly', 'Sagar Fast Food', '32', ''],
-					['Masala Dosa', 'South Indian', 'Dosa and Idly', 'Sagar Fast Food', '50', ''],
-					['Poori Sagu', 'South Indian', 'South Indian Specialites', 'Sagar Fast Food', '40', ''],
-					['Rava Onion Masala Dosa', 'South Indian', 'South Indian Specialites', 'Sagar Fast Food', '70', ''],
-					['Paper Masala Dosa', 'South Indian', 'South Indian Specialites', 'Sagar Fast Food', '65', ''],
-					['Khara Bath', 'South Indian', 'South Indian Specialites', 'Sagar Fast Food', '25', ''],
-					['Schezwan Fried Rice', 'Chinese', 'Fried Rice', 'Sagar Fast Food', '100', ''],
-					['Pakora', 'Snacks', '', 'Sagar Fast Food', '30', ''],
-					['Butter Chicken', 'Fast Food', 'Rolls', 'Rolls on wheels', '130', 'FALSE'],
-					['Butter Paneer Rice', 'North Indian', 'Rice', 'Rolls on wheels', '140', ''],
-					['Schezwan Babycorn', 'Fast Food', 'Rolls', 'Rolls on wheels', '110', ''],
-					['Schezwan Chicken', 'Fast Food', 'Rolls', 'Rolls on wheels', '139', 'FALSE'],
-					['Mixed Veg Mayo', 'Fast Food', 'Rolls', 'Rolls on wheels', '100', ''],
-					['Chicken Tava Fried', 'Fast Food', 'Rolls', 'Rolls on wheels', '130', 'FALSE'],
-					['Chicken Tikka', 'Fast Food', 'Rolls', 'Rolls on wheels', '140', 'FALSE'],
-					['Chicken Kaati Kebab', 'Fast Food', 'Rolls', 'Rolls on wheels', '140', 'FALSE'],
-					['Aloo Tikiya', 'Fast Food', 'Rolls', 'Rolls on wheels', '100', ''],
-					['Egg Roll ( 2 Eggs )', 'Fast Food', 'Rolls', 'Rolls on wheels', '90', 'FALSE'],
-					['Vegetable Pulao', 'North Indian', 'Rice', 'Rolls on wheels', '140', ''],
-					['Red Velvet Choco Sin', 'Desserts', 'Ice Cream', 'Polar Bear', '190', ''],
-					['Cookie Monster Sundae', 'Desserts', 'Ice Cream', 'Polar Bear', '190', ''],
-					['Death By Chocolate', 'Desserts', 'Ice Cream', 'Polar Bear', '220', ''],
-					['Lychee Sundae', 'Desserts', 'Ice Cream', 'Polar Bear', '190', ''],
-					['Purple Punch', 'Desserts', 'Ice Cream', 'Polar Bear', '100', ''],
-					['Choco Almond Fudge', 'Desserts', 'Ice Cream', 'Polar Bear', '100', ''],
-					['Belgian Chocolate', 'Desserts', 'Ice Cream', 'Polar Bear', '100', ''],
-					['Alphonso Mango', 'Desserts', 'Ice Cream', 'Polar Bear', '90', ''],
-					['Fig O Honey', 'Desserts', 'Ice Cream', 'Polar Bear', '90', ''],
-					['Tender Coconut', 'Desserts', 'Ice Cream', 'Polar Bear', '100', ''],
-					['Chocolate Milkshake', 'Beverages', 'Milkshake', 'Polar Bear', '150', ''],
-					['Chicken Whopper', 'Fast Food', 'Burger', 'Burger King', '160', 'FALSE'],
-					['Chicken Chilli Cheese Melt', 'Fast Food', 'Burger', 'Burger King', '130', 'FALSE'],
-					['BK Veggie', 'Fast Food', 'Burger', 'Burger King', '90', ''],
-					['Crispy Veg Supreme', 'Fast Food', 'Burger', 'Burger King', '70', ''],
-					['Veg Whopper', 'Fast Food', 'Burger', 'Burger King', '150', ''],
-					['Cold Coffee', 'Beverages', '', 'Burger King', '100', ''],
-					['Medium Fries', 'Fast Food', 'Fries', 'Burger King', '80', ''],
-					['Chicken Wings 15 Pieces', 'Fast Food', '', 'Burger King', '400', 'FALSE'],
-					['Burritos', 'Mexican', 'Appetizers', 'Tacos Mexico', '210', ''],
-					['Guacamole', 'Mexican', 'Appetizers', 'Tacos Mexico', '180', ''],
-					['Quesadilas', 'Mexican', 'Appetizers', 'Tacos Mexico', '160', ''],
-					['Tacos', 'Mexican', 'Appetizers', 'Tacos Mexico', '120', ''],
-					['Nachos with spiced salsa', 'Mexican', 'Appetizers', 'Tacos Mexico', '200', ''],
-					['Spaghetti', 'Italian', 'Appetizers', 'Little Italy', '200', ''],
-					['Tirmisu', 'Italian', 'Appetizers', 'Little Italy', '350', ''],
-					['Ravioli', 'Italian', 'Appetizers', 'Little Italy', '220', ''],
-					['Penne Pasta', 'Italian', 'Appetizers', 'Little Italy', '180', ''],
-					['Lasagna', 'Italian', 'Appetizers', 'Little Italy', '300', ''],
-					['Pani puri', 'Snacks', 'Chaats', 'Chaat Corner', '50', ''],
-					['Aloo tikki chole', 'Snacks', 'Chaats', 'Chaat Corner', '90', ''],
-					['Bhel puri', 'Snacks', 'Chaats', 'Chaat Corner', '65', ''],
-					['Dahi papdi', 'Snacks', 'Chaats', 'Chaat Corner', '30', ''],
-					['Samosa', 'Snacks', 'Chaats', 'Chaat Corner', '20', ''],
-					['Sev puri', 'Snacks', 'Chaats', 'Chaat Corner', '40', ''],
-					['Dahi puri', 'Snacks', 'Chaats', 'Chaat Corner', '50', ''],
-					['Papdi', 'Snacks', 'Chaats', 'Chaat Corner', '15', ''],
-					['Dahi vada', 'Snacks', 'Chaats', 'Chaat Corner', '20', ''],
-					['Plain Dosa', 'South Indian', 'Dosa and Idly', 'Dosa Corner', '30', ''],
-					['Mysore Masala dosa', 'South Indian', 'Dosa and Idly', 'Dosa Corner', '40', ''],
-					['Set Dosa', 'South Indian', 'Dosa and Idly', 'Dosa Corner', '35', ''],
-					['Neer Dosa', 'South Indian', 'Dosa and Idly', 'Dosa Corner', '35', ''],
-					['Atta Dosa', 'South Indian', 'Dosa and Idly', 'Dosa Corner', '40', ''],
-					['Egg Dosa', 'South Indian', 'Dosa and Idly', 'Dosa Corner', '50', ''],
-					['Ragi Dosa', 'South Indian', 'Dosa and Idly', 'Dosa Corner', '40', ''],
-					['Grilled Sandwich', 'Fast Food', 'Sandwiches', 'Food Plaza', '120', ''],
-					['Paneer Sandwich', 'Fast Food', 'Sandwiches', 'Food Plaza', '110', ''],
-					['Grilled Cheese Sandwich', 'Fast Food', 'Sandwiches', 'Food Plaza', '130', ''],
-					['Veg Cheese Sandwich', 'Fast Food', 'Sandwiches', 'Food Plaza', '100', ''],
-					['Mayo Veggie Sandwich', 'Fast Food', 'Sandwiches', 'Food Plaza', '110', ''],
-					['Pav Bhaji', 'Snacks', 'Chaats', 'Chai Point', '140', ''],
-					['Kashmiri Kahwa Chai UniFlask', 'Beverages', 'Hot Drink', 'Chai Point', '100', ''],
-					['Ginger lemon Chai UniFlask', 'Beverages', 'Hot Drink', 'Chai Point', '90', ''],
-					['Sulemani Chai UniFlask', 'Beverages', 'Hot Drink', 'Chai Point', '90', ''],
-					['Mango Shake', 'Beverages', 'Milkshake', 'Chai Point', '120', ''],
-					['Millet Pongal', 'South Indian', 'South Indian Specialites', 'Chai Point', '100', ''],
-					['Anda Paratha with Cheese', 'North Indian', 'Paratha', 'Chai Point', '110', 'FALSE'],
-					['Kesar Badam Lassi', 'Beverages', 'Lassi', 'Chai Point', '120', ''],
-					['Chicken Shawarma', 'Middle Eastern', 'Shawarma', 'Arabian Hut', '100', 'FALSE'],
-					['Grilled kebab shawarma', 'Middle Eastern', 'Shawarma', 'Arabian Hut', '120', 'FALSE'],
-					['Paneer Shawarma', 'Middle Eastern', 'Shawarma', 'Arabian Hut', '130', ''],
-					['Ratatouille', 'French', 'Appetizers', 'Hotel France', '225', ''],
-					['Lobster bisque', 'French', 'Appetizers', 'Hotel France', '300', 'FALSE'],
-					['Spinach soufflŠ', 'French', 'Appetizers', 'Hotel France', '250', ''],
-					['CrŠpes', 'French', 'Appetizers', 'Hotel France', '175', ''],
-					['Cheesy Croissant Casserole', 'French', 'Appetizers', 'Hotel France', '200', ''],
-					['French Apple Tart', 'French', 'Appetizers', 'Hotel France', '200', '']]
-		f=open("Pass.txt","r")
-		pas=f.read()
-		pas=pas[0:len(pas)-1]
-		mydb = sql.connect(host="localhost", user="root",passwd=pas,charset="utf8")
-		mycursor = mydb.cursor()
-		try:
-			mycursor.execute("CREATE Database Instafood")
-		except:
-			pass
-		finally:
-			mycursor.execute("USE Instafood")
-
-		try:
-			mycursor.execute(
-				"CREATE TABLE Food(FoodName char(45),CusineOfFood char(20),Type char(40),Restaurant char(40),Price INT,Veg BOOLEAN DEFAULT TRUE)")
-			mycursor.execute("DROP TABLE Food")
-			mycursor.execute(
-				"CREATE TABLE Food(FoodName char(45),CusineOfFood char(20),Type char(40),Restaurant char(40),Price INT,Veg BOOLEAN DEFAULT TRUE)")
-			for i in foodlist:
-				if (i[5] == ''):
-					i[5] = 1
-				else:
-					i[5] = 0
-				i[4] = int(i[4])
-
-				tu = tuple(i)
-
-				s = "INSERT INTO Food(FoodName,CusineOfFood,Type,Restaurant,Price,Veg) VALUES (%s,%s,%s,%s,%s,%s)"
-				mycursor.execute(s, tu)
-		except:
-			pass
-		finally:
-			mydb.commit()
-
-	def Database(self):
-		global frame2
-		frame2 = Frame(win3, width=500, height=230, bg="pale green")
-		frame2.place(x=0, y=100)
-
-		# Establishing connections with database
-		f=open("Pass.txt","r")
-		pas=f.read()
-		pas=pas[0:len(pas)-1]
-		try:
-			mydb = sql.connect(host="localhost", user="root",passwd=pas,database="Instafood",charset="utf8")
-		except:
-			mydb = sql.connect(host="localhost", user="root",passwd=pas,charset="utf8")
-
-		mycursor = mydb.cursor()
-
-		# Setting Name and Logo for TK window
-
-		li = ["Chinese", "South Indian", "North Indian", "Desserts", "Beverages", "Fast Food", "Snacks", "Italian"]
-
-		# Radiobuttons for Cusine
-		cus = StringVar()
-		cus.set("Chinese")
-		cusine = ""
-		CusineButton = Radiobutton(frame2, text="")
-
-		top = ""
-
-		def Submit():
-			global cusine
-			global frame3
-			cusine = cus.get()
-			frame2.destroy()
-			frame3 = Frame(win3, width=20, height=430, bg="pale green")
-			frame3.place(x=0, y=100)
-
-			SelectRest()
-
-		def SetButtons():
-			global submitButton
-			global exitButton
-			a = 40
-			count = 1
-			for i in range(0, len(li), 1):
-				if (i == int(len(li)) / 2):
-					a = 170
-					count = 1
-				li[i] = li[i]
-				Radiobutton(frame2, text=li[i], variable=cus, value=li[i], padx=10, bg="pale green").place(x=a, y=(
-																													  count) * 50)
-				count += 1
-
-			Button(frame2, text="Submit", command=Submit, padx=10, pady=10, bg="orange").place(x=350, y=80)
-			Button(frame2, text="Exit", padx=15, pady=10, command=frame2.quit, bg="orange").place(x=350, y=170)
-
-		global cart
-		global Restaurant
-
-		restli = ["None"]
-		restaurant = ""
-		option = StringVar()
-
-		SetButtons()
-
-		def xlsxfile():
-			global cart
-
-			workbook = xlsxwriter.Workbook('data.xlsx')
-			worksheet = workbook.add_worksheet()
-			worksheet.write('A1', 'FoodName') 
-			worksheet.write('B1', 'Quantity') 
-			worksheet.write('C1', 'Price') 
-			li=list(cart.values())
-
-			for i in range(0,len(li)):
-				worksheet.write("A"+str(i+2),li[i][0])
-				worksheet.write("B"+str(i+2),li[i][2])
-				worksheet.write("C"+str(i+2),li[i][1])
-			workbook.close()
-
-		def tot():
-			global cart
-			GrandTotal=0
-			for j in cart:
-				li = cart[j]
-				qty = li[2]
-				price = li[1]
-				if qty != 0:
-					GrandTotal += qty * price
-			return GrandTotal	
-
-		def mklist(n):
-			for i in range(1,n+1):
-				yield[]    
-		
-		
-
-		def Bill():
-			r=Tk()
-			r.withdraw()
-			messagebox.showinfo("Success","The Bill has been Generated. Please check the folder. Thank You and Order Again :)")
-			r.destroy()
-
-			xlsxfile()
-
-			global maxrow
-			global maxcolumn
-			global lists
-
-			pdfmetrics.registerFont(TTFont('VeraIt','VeraIt.ttf'))
-			wb=openpyxl.load_workbook("data.xlsx") 
-			sheet=wb.active
-			maxrow=sheet.max_row
-			maxcolumn=sheet.max_column
-			c = canvas.Canvas('Bill.pdf', pagesize=A4)
-			width, height = A4
-			maxrow=sheet.max_row
-			maxcolumn=sheet.max_column
-			elements = []
-			lists=list(mklist(maxrow))
-			total=tot()
-
-			im=Image.open("instafood.png")
-			c.drawInlineImage(im,455,600)
-		  
-		  
-			for i in range(1,maxrow+1):
-				for j in range(1,maxcolumn+1):
-					cellobj=sheet.cell(row=i,column=j)
-					if j<=3:
-						lists[i-1].append(str(cellobj.value))
-					else:
-						pass
-			t=Table(lists)
-			t.setStyle(TableStyle([
-							 ('GRID',(0,0),(-1,-1),0.5,colors.grey),
-							 ('BOX',(0,0),(-1,-1),2,colors.black),
-							 ]))
-
-			t.wrapOn(c, width, height)
-			t.drawOn(c, 180,450)
-			c.setLineWidth(2.5)
-			c.line(15,15,575,15)
-			c.line(575,15,575,815)
-			c.line(575,815,15,815)
-			c.line(15,815,15,15)
-			c.drawString(225,430,"*Item Total:"+str(total))
-			c.drawString(225,405,"*GST:"+str((8*total)/100))
-			c.drawString(225,380,"*Delivery Charges:"+str(30))
-			c.drawString(225,355,"*GrandTotal:"+str(((8*total)/100)+total+30))
-			c.drawString(100,650,"Thanks for choosing Intsafood:),Bon Appetit!!!! ") 
-			c.drawString(100,638,"Here are your order details:")  
-			styles = getSampleStyleSheet()
-			c.setFont("Courier",25)
-			c.drawString(100,750,"INVOICE")  
-			t3 = "Disclaimer:This is an acknowledgement of Delivery of Order and not an actual invoice.Details mentioned above including the menu prices and taxes(as applicable) are provided by the restaurant to Instafood.Resposiblity of charging taxes lies with the Restaurant and Instafood disclaims any liablity that may arise in this respect."
-			p3 = Paragraph(t3, style=styles["Normal"])
-			p3.wrapOn(c,500,200)
-			p3.drawOn(c, 50, 50)
-			c.setFont("Courier",8)
-			c.drawString(50,35,"*All prices are of the value Indian Ruppees(INR)")
-			
-			c.save()
-
-
-		def SelectRest():
-			global restli
-			global cusine
-			global veg
-			global option
-
-			veg = IntVar()
-			option = StringVar()
-
-			def SubmitRest():
-				global currentpos
-				global restaurant
-				global frame4
-				currentpos = 0
-				restaurant = option.get()
-				SelectFood()
-
-			mycursor.execute("SELECT DISTINCT(Restaurant) from food where CusineOfFood=(%s);", (cusine,))
-			record = mycursor.fetchall()
-
-			restli = ["Any"]
-
-			for i in record:
-				restli.append(i[0])
-			option.set("Any")
-
-			Label(frame3, text="\t\t\t", bg="pale green").grid(row=0, column=0)
-			Label(frame3, text="\t\t\t", bg="pale green").grid(row=0, column=1)
-			Label(frame3, text="\t\t", bg="pale green").grid(row=0, column=2)
-
-			Label(frame3, text="Restaurant: ", bg="pale green").grid(row=1, column=0, padx=5, pady=5, sticky=E)
-
-			op = OptionMenu(frame3, option, *restli)
-			op.grid(row=1, column=1, padx=5, pady=5, sticky=W)
-			op.config(bg="pale green")
-
-			cb = Checkbutton(frame3, text="Veg Only", variable=veg, bg="pale green")
-			cb.grid(row=3, column=0, padx=7, pady=7, sticky=E)
-
-			Button(frame3, text="Submit", command=SubmitRest, bg="orange").grid(row=4, column=0, columnspan=5, padx=7,
-																				pady=7, sticky=W + E)
-			Button(frame3, text="Back", command=lambda: back(frame2), bg="orange").grid(row=5, column=0, columnspan=5,
-																						padx=7, pady=7, sticky=W + E)
-
-		def SelectFood():
-			global cusine
-			global restaurant
-			global currentpos
-			global start
-			global cart
-			global veg
-			global frame4
-			global start
-
-			currentpos = 0
-			frame3.destroy()
-			frame4 = Frame(win3, width=20, height=400, bg="pale green")
-			frame4.place(x=0, y=100)
-
-			if (restaurant == "Any" and veg.get() == 1):
-				mycursor.execute("SELECT FoodName,Price,Restaurant from food where CusineOfFood=(%s) and Veg=1",
-								 (cusine,))
-
-			elif (restaurant == "Any" and veg.get() == 0):
-				mycursor.execute("SELECT FoodName,Price,Restaurant from food where CusineOfFood=(%s)", (cusine,))
-			elif (veg.get() == 1):
-				mycursor.execute(
-					"SELECT FoodName,Price,Restaurant from food where CusineOfFood=(%s) and Restaurant=(%s) and Veg=1",
-					(cusine, restaurant))
-			else:
-				mycursor.execute(
-					"SELECT FoodName,Price,Restaurant from food where CusineOfFood=(%s) and Restaurant=(%s) and Veg=1",
-					(cusine, restaurant))
-
-			record = mycursor.fetchall()
-
-			qty = IntVar()
-			qty.set(0)
-
-			def change(n):
-				global start
-				start = start + n
-				frame4.destroy()
-				SelectFood()
-
-			def Buttondisplay(num):
-				global cusine
-
-				if (num - start == 0):
-					Button(frame4, text="Add To Cart", bg="orange",
-						   command=lambda: Addtocart(e1.get(), record[num][0], record[num][1], record[num][2], cusine)).grid(
-						row=0,
-						column=4,
-						padx=5,
-						pady=5)
-				elif (num - start == 1):
-					Button(frame4, text="Add To Cart", bg="orange",
-						   command=lambda: Addtocart(e2.get(), record[num][0], record[num][1], record[num][2], cusine)).grid(
-						row=1,
-						column=4,
-						padx=5,
-						pady=5)
-				elif (num - start == 2):
-					Button(frame4, text="Add To Cart", bg="orange",
-						   command=lambda: Addtocart(e3.get(), record[num][0], record[num][1], record[num][2], cusine)).grid(
-						row=2,
-						column=4,
-						padx=5,
-						pady=5)
-				elif (num - start == 3):
-					Button(frame4, text="Add To Cart", bg="orange",
-						   command=lambda: Addtocart(e4.get(), record[num][0], record[num][1], record[num][2], cusine)).grid(
-						row=3,
-						column=4,
-						padx=5,
-						pady=5)
-				else:
-					Button(frame4, text="Add To Cart", bg="orange",
-						   command=lambda: Addtocart(e5.get(), record[num][0], record[num][1], record[num][2], cusine)).grid(
-						row=4,
-						column=4,
-						padx=5,
-						pady=5)
-
-			def Addtocart(qty, FoodName, price, rest, cus):
-				global currentpos
-				global cart
-
-				self.addorder([FoodName, rest,price,qty,cus])
-				try:
-					l.destroy()
-				except:
-					pass
+				item_frame = tk.Frame(content_frame, bg='lightblue', padx=20, pady=5)  # Adjust padding as needed
+				item_frame.grid(row=row_number, column=col_number, padx=5, pady=5)  # Adjust padding as needed
 
 				try:
-					l = Label(frame4, text="\t\t", bg="pale green")
-					qty = int(qty)
-					r = len(rest)
-					f = len(FoodName)
+					image = Image.open(io.BytesIO(gambar_minuman))
+					image = image.resize((200, 200))  # Adjust size as needed
+					photo = ImageTk.PhotoImage(image)
+					canvas = tk.Canvas(item_frame, width=250, height=250, bg='lightblue', highlightthickness=0)
+					canvas.create_image(125, 125, image=photo)  # Center the image horizontally and vertically
+					canvas.image = photo
+					canvas.bind("<Button-1>", lambda event, nm=nama_minuman, h=harga: (nm, h))
+					canvas.pack()
+				except Exception as e:
+					error_label = tk.Label(item_frame, text=f"Error: {e}", font=("Helvetica", 16), bg='lightblue')
+					error_label.pack(pady=10)
 
-					FoodId = cusine[0:3] + FoodName[0:2] + FoodName[f - 2:f] + rest[0:2] + rest[r - 2:r]
-					if (qty <= 7):
-						cart[FoodId] = (FoodName, price, qty)
-						
-					else:
-						l = Label(frame4, text="MAX 7 items.", bg="pale green")
-						l.grid(row=8, column=0)
+				# Format harga
+				formatted_price = self.format_price(harga)
+				label_text = f"{nama_minuman}\nRp {formatted_price}"  # Combine nama_minuman and harga into a single text
+				label = tk.Label(item_frame, text=label_text, font=("Helvetica", 14), bg='lightblue')
+				label.pack(pady=(10, 0))
 
-				except:
-					l = Label(frame4, text="Enter an integer value please.", bg="pale green")
-					l.grid(row=8, column=0)
+				# Create delete button for each menu item
+				delete_button = tk.Button(item_frame, text="Delete", command=lambda nm=nama_minuman: self.delete_selected_menu(nm), bg='red',
+										  font=("Helvetica", 12, "bold"), padx=10, pady=5)
+				delete_button.pack(pady=10)
 
-			if (len(record) >= start + 5):
-				end = start + 5
-				nex = Button(frame4, text=">>Next", command=lambda: change(+5), bg="orange")
+		back_button = tk.Button(delete_menu_frame, text="Back", command=self.create_admin_page, bg='orange',
+								font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		back_button.pack(pady=20)
+
+		# Set last frame
+		self.last_frame = delete_menu_frame
+
+	def delete_selected_menu(self, nama_minuman):
+		# Connect to the database
+		self.db_manager.connect()
+
+		try:
+			# Execute the delete query
+			query = "DELETE FROM menu WHERE nama_minuman = %s"
+			self.db_manager.cursor.execute(query, (nama_minuman))
+			self.db_manager.conn.commit()
+
+			# Tampilkan pesan sukses
+			messagebox.showinfo("Success", f"Menu {nama_minuman} deleted successfully.")
+		except Exception as e:
+			# Tampilkan pesan error jika terjadi masalah saat penghapusan data
+			messagebox.showerror("Error", f"Failed to delete menu: {e}")
+		finally:
+			# Disconnect from the database
+			self.db_manager.disconnect()
+
+		# Perbarui tampilan halaman
+		self.delete_menu_page()
+
+	def format_price(self, price):
+		return f"Rp {price:,.0f}"
+
+	def view_menu(self):
+		self.destroy_last_frame()
+
+		# Connect to the database
+		self.db_manager.connect()
+
+		# Retrieve menu data from the database
+		query = "SELECT nama_minuman, harga, gambar_minuman, deskripsi FROM menu"
+		self.db_manager.cursor.execute(query)
+		menu_data = self.db_manager.cursor.fetchall()
+
+		# Disconnect from the database
+		self.db_manager.disconnect()
+
+		# Create view menu frame
+		view_menu_frame = tk.Frame(self.root, bg='lightblue')
+		view_menu_frame.pack(expand=True, fill='both')
+
+		# Title label
+		title_label = tk.Label(view_menu_frame, text="Available Menu", font=("Helvetica", 24, "bold"), bg='lightblue')
+		title_label.pack(pady=(50, 20))
+
+		# Content frame
+		content_frame = tk.Frame(view_menu_frame, bg='lightblue')
+		content_frame.pack(expand=True, fill='both')
+
+		if not menu_data:
+			no_menu_label = tk.Label(content_frame, text="No menu available", font=("Helvetica", 16), bg='lightblue')
+			no_menu_label.pack(pady=20)
+		else:
+			for i, (nama_minuman, harga, gambar_minuman, deskripsi) in enumerate(menu_data):
+				# Determine row and column number
+				row_number = i // 5  # Setiap baris akan berisi maksimal 5 item
+				col_number = i % 5   # Setiap item akan ditempatkan di kolom yang sesuai dengan indeksnya
+
+				item_frame = tk.Frame(content_frame, bg='lightblue', padx=20, pady=5)  # Adjust padding as needed
+				item_frame.grid(row=row_number, column=col_number, padx=5, pady=5, sticky="nsew")  # Adjust padding as needed
+
+				def on_image_click(nama_minuman, harga, deskripsi):
+					self.show_description_popup(nama_minuman, harga, deskripsi)
+
+				try:
+					image = Image.open(io.BytesIO(gambar_minuman))
+					image = image.resize((200, 200))  # Adjust size as needed
+					photo = ImageTk.PhotoImage(image)
+					canvas = tk.Canvas(item_frame, width=250, height=250, bg='lightblue', highlightthickness=0)  # Adjust canvas size and highlightthickness as needed
+					canvas.create_image(125, 125, image=photo)  # Center the image horizontally and vertically
+					canvas.image = photo
+					canvas.bind("<Button-1>", lambda event, nm=nama_minuman, h=harga, d=deskripsi: on_image_click(nm, h, d))
+					canvas.pack()
+				except Exception as e:
+					error_label = tk.Label(item_frame, text=f"Error: {e}", font=("Helvetica", 16), bg='lightblue')
+					error_label.pack(pady=10)
+
+				# Format harga
+				formatted_price = self.format_price(harga)
+				label_text = f"{nama_minuman}\n{formatted_price}"  # Combine nama_minuman, harga, and deskripsi into a single text
+				label = tk.Label(item_frame, text=label_text, font=("Helvetica", 16), bg='lightblue')
+				label.pack(pady=(10, 0))
+
+		back_button = tk.Button(view_menu_frame, text="Back", command=self.create_admin_page, bg='orange',
+								font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		back_button.pack(pady=20)
+
+		# Set last frame
+		self.last_frame = view_menu_frame
+
+	def save_description_to_database(self, nama_minuman, deskripsi):
+		try:
+			# Connect to the database
+			self.db_manager.connect()
+
+			# Execute the update query to save the edited description
+			query = "UPDATE menu SET deskripsi = %s WHERE nama_minuman = %s"
+			self.db_manager.cursor.execute(query, (deskripsi, nama_minuman))
+			self.db_manager.conn.commit()  # Commit the changes to the database
+
+			# Disconnect from the database
+			self.db_manager.disconnect()
+
+			print("Deskripsi berhasil disimpan ke database.")
+		except Exception as e:
+			print("Error:", e)
+
+	def show_description_popup(self, nama_minuman, harga, deskripsi):
+		# Create popup window
+		popup_window = tk.Toplevel(self.root)
+		popup_window.wm_overrideredirect(True)  # Hide the title bar and icon on the popup window
+
+		# Get screen size
+		screen_width = popup_window.winfo_screenwidth()
+		screen_height = popup_window.winfo_screenheight()
+
+		# Define position and size of the popup window
+		popup_width = screen_width // 2  # Half of the screen width
+		popup_height = screen_height  # Same as screen height
+		popup_x = screen_width // 2  # Half of the screen width
+		popup_y = 0  # Top of the screen
+
+		# Set geometry of the popup window
+		popup_window.geometry(f"{popup_width}x{popup_height}+{popup_x}+{popup_y}")
+
+		# Set background color of the popup window
+		background_color = "lightblue"
+		popup_window.configure(bg=background_color)
+
+		# Create left frame as border
+		left_frame = tk.Frame(popup_window, bg="black", width=2)
+		left_frame.place(relx=0, rely=0, relheight=1)
+
+		# Create right frame as border
+		right_frame = tk.Frame(popup_window, bg="black", width=2)
+		right_frame.place(relx=1, rely=0, relheight=1, anchor="ne")
+
+		# Display drink details with appropriate text color
+		detail_label = tk.Label(popup_window, text=f"{nama_minuman}\nHarga: {harga}\nDeskripsi:", font=("Helvetica", 14), bg=background_color, fg="#333333")
+		detail_label.pack(padx=20, pady=20, anchor="w")
+
+		# Create Text widget for editing description
+		description_text = tk.Text(popup_window, wrap="word", height=10, width=50)
+		# Insert initial description text with a newline at the beginning
+		description_text.insert("1.0", f"\n{deskripsi}")
+		description_text.pack(padx=20, pady=(0, 20), fill="both", expand=True)
+
+		# Add button to save the edited description to the database
+		save_button = tk.Button(popup_window, text="Simpan", command=lambda: self.save_description_to_database(nama_minuman, description_text.get("1.0", "end-1c")), font=("Helvetica", 12, "bold"), bg="#32CD32", fg="white", padx=10, pady=5)
+		save_button.pack(pady=10)
+
+		# Add button to close the popup with attractive design
+		exit_button = tk.Button(popup_window, text="Close", command=popup_window.destroy, font=("Helvetica", 12, "bold"), bg="#FF5733", fg="white", padx=10, pady=5)
+		exit_button.pack(pady=10)
+
+	def add_menu_page(self):
+		self.destroy_last_frame()
+
+		add_menu_frame = tk.Frame(self.root, bg='lightblue')
+		add_menu_frame.pack(expand=True, fill='both')
+
+		title_label = tk.Label(add_menu_frame, text="Add New Menu", font=("Helvetica", 24, "bold"), bg='lightblue')
+		title_label.pack(pady=(50, 20))
+
+		# Tambahkan komponen-komponen formulir untuk menambahkan menu
+		menu_label = tk.Label(add_menu_frame, text="Menu:", font=("Helvetica", 16), bg='lightblue')
+		menu_label.pack()
+		self.menu_entry = tk.Entry(add_menu_frame, font=("Helvetica", 16))
+		self.menu_entry.pack(pady=10)
+
+		price_label = tk.Label(add_menu_frame, text="Price (IDR):", font=("Helvetica", 16), bg='lightblue')
+		price_label.pack()
+		self.price_entry = tk.Entry(add_menu_frame, font=("Helvetica", 16))
+		self.price_entry.pack(pady=10)
+
+		# Label dan entry untuk deskripsi
+		description_label = tk.Label(add_menu_frame, text="Description:", font=("Helvetica", 16), bg='lightblue')
+		description_label.pack()
+		self.description_entry = tk.Entry(add_menu_frame, font=("Helvetica", 16))
+		self.description_entry.pack(pady=10)
+
+		# Label untuk menampilkan gambar yang diunggah
+		self.image_label = tk.Label(add_menu_frame, text="No image uploaded", font=("Helvetica", 16), bg='lightblue')
+		self.image_label.pack(pady=10)
+
+		# Tombol untuk mengunggah gambar
+		upload_button = tk.Button(add_menu_frame, text="Upload Image", command=self.upload_image, bg='blue',
+								  font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		upload_button.pack(pady=10)
+
+		# Tombol untuk menambahkan menu baru
+		add_button = tk.Button(add_menu_frame, text="Add", command=self.add_new_menu, bg='green',
+							   font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		add_button.pack(pady=10)
+
+		# Tombol untuk kembali ke halaman view menu
+		back_button = tk.Button(add_menu_frame, text="Back", command=self.create_admin_page, bg='orange',
+								font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		back_button.pack(pady=20)
+
+		self.last_frame = add_menu_frame
+
+	def upload_image(self):
+		from tkinter import filedialog
+
+		# Minta pengguna untuk memilih file gambar
+		file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg; *.jpeg; *.png")])
+
+		if file_path:
+			# Baca gambar dalam mode biner
+			with open(file_path, "rb") as file:
+				self.image_data = file.read()
+
+			# Ubah teks label gambar menjadi "Image Uploaded" setelah gambar diunggah
+			self.image_label.config(text="Image Uploaded")
+
+			# Tampilkan gambar yang diunggah
+			image = Image.open(file_path)
+			image = image.resize((100, 100))  # Sesuaikan ukuran gambar sesuai kebutuhan
+			photo = ImageTk.PhotoImage(image)
+
+			# Perbarui label gambar dengan gambar yang diunggah
+			self.image_label.config(image=photo)
+			self.image_label.image = photo  # Penting untuk mencegah garbage collection
+
+	def add_new_menu(self):
+		menu_name = self.menu_entry.get()
+		price = self.price_entry.get()
+		deskripsi = self.description_entry.get()  # Add this line to get the description from the entry field
+
+		# Perform validation for menu name, price, and description
+		if menu_name and price and deskripsi:
+			try:
+				price = float(price)
+
+				# Insert menu data into the database
+				self.db_manager.insert_menu(menu_name, price, self.image_data, deskripsi)
+
+				messagebox.showinfo("Success", "New menu added successfully.")
+
+				# Clear entry fields and image label
+				self.menu_entry.delete(0, tk.END)
+				self.price_entry.delete(0, tk.END)
+				self.description_entry.delete(0, tk.END)
+				self.image_label.config(text="No image uploaded")
+
+				# Go back to the view menu page
+				self.view_menu()
+
+			except ValueError:
+				messagebox.showerror("Error", "Price must be a valid number.")
+		else:
+			messagebox.showerror("Error", "Please enter both menu name, price, and description.")
+
+	def view_sales_data(self):
+		# Destroy the last frame
+		self.destroy_last_frame()
+
+		try:
+			# Connect to the database
+			self.db_manager.connect()
+
+			# Retrieve sales data from the database
+			query = "SELECT id, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan FROM ringkasan_pesanan"
+			self.db_manager.cursor.execute(query)
+			sales_data = self.db_manager.cursor.fetchall()
+
+			# Create a new frame to display sales data
+			sales_frame = tk.Frame(self.root, bg='lightblue')
+			sales_frame.pack(expand=True, fill='both')
+
+			title_label = tk.Label(sales_frame, text="Sales Data", font=("Helvetica", 24, "bold"), bg='lightblue')
+			title_label.pack(pady=(10, 10))
+
+			# Filter entry
+			filter_frame = tk.Frame(sales_frame, bg='lightblue')
+			filter_frame.pack(pady=5)
+
+			filter_label = tk.Label(filter_frame, text="Filter:", font=("Helvetica", 12), bg='lightblue')
+			filter_label.grid(row=0, column=0)
+
+			filter_entry = tk.Entry(filter_frame)
+			filter_entry.grid(row=0, column=1)
+
+			def filter_table():
+				keyword = filter_entry.get().lower()
+				filtered_sales_data = [row for row in sales_data if keyword in str(row).lower()]
+				update_table(filtered_sales_data)
+
+			filter_button = tk.Button(filter_frame, text="Apply", command=filter_table, bg='green', font=("Helvetica", 10, "bold"))
+			filter_button.grid(row=0, column=2, padx=5)
+
+			def update_table(data):
+				# Clear previous data
+				tree.delete(*tree.get_children())
+
+				# Insert filtered data
+				for i, row in enumerate(data, start=1):
+					tree.insert("", "end", text=str(i), values=row)
+
+			# Display sales data in a table format
+			tree_frame = tk.Frame(sales_frame)
+			tree_frame.pack(expand=True, fill='both')
+			tree_frame.pack_propagate(False)
+
+			tree = ttk.Treeview(tree_frame, columns=("ID", "Item", "Flavor", "Percentage", "Quantity", "Unit Price", "Total Price", "Payment Status", "Order Status"), show="headings")
+			tree.heading("ID", text="ID")
+			tree.heading("Item", text="Item", anchor="center")
+			tree.heading("Flavor", text="Flavor", anchor="center")
+			tree.heading("Percentage", text="Percentage", anchor="center")
+			tree.heading("Quantity", text="Quantity", anchor="center")
+			tree.heading("Unit Price", text="Unit Price", anchor="center")
+			tree.heading("Total Price", text="Total Price", anchor="center")
+			tree.heading("Payment Status", text="Payment Status", anchor="center")
+			tree.heading("Order Status", text="Order Status", anchor="center")
+
+			# Set column widths
+			tree.column("ID", width=50)
+			tree.column("Item", width=150, anchor="center")
+			tree.column("Flavor", width=100, anchor="center")
+			tree.column("Percentage", width=100, anchor="center")
+			tree.column("Quantity", width=100, anchor="center")
+			tree.column("Unit Price", width=100, anchor="center")
+			tree.column("Total Price", width=100, anchor="center")
+			tree.column("Payment Status", width=120, anchor="center")
+			tree.column("Order Status", width=120, anchor="center")
+
+			# Adding a vertical scrollbar to the treeview
+			scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+			tree.configure(yscroll=scrollbar.set)
+			scrollbar.pack(side='right', fill='y')
+
+			tree.pack(pady=10, padx=10, expand=True, fill='both')
+
+			for i, row in enumerate(sales_data, start=1):
+				tree.insert("", "end", text=str(i), values=row)
+
+			def show_chart():
+				# Create and display the sales chart
+				chart_window = tk.Toplevel(self.root)
+				chart_window.title("Sales Chart")
+
+				# Prepare data for the chart
+				items = [row[1] for row in sales_data]
+				quantities = [int(row[4]) for row in sales_data]
+
+				# Create a bar chart
+				fig, ax = plt.subplots(figsize=(8, 6))
+				ax.bar(items, quantities)
+				ax.set_xlabel("Item")
+				ax.set_ylabel("Quantity")
+				ax.set_title("Sales Chart")
+
+				# Convert the Matplotlib figure to a Tkinter canvas
+				canvas = FigureCanvasTkAgg(fig, master=chart_window)
+				canvas.draw()
+				canvas.get_tk_widget().pack()
+
+			# Frame for buttons
+			button_frame = tk.Frame(sales_frame, bg='lightblue')
+			button_frame.pack(pady=20)
+
+			# Button to show chart
+			chart_button = tk.Button(button_frame, text="Show Chart", command=show_chart, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+			chart_button.grid(row=0, column=0, padx=10)
+
+			# Back button to return to admin page
+			back_button = tk.Button(button_frame, text="Back", command=self.create_admin_page, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+			back_button.grid(row=0, column=1, padx=10)
+
+		except Exception as e:
+			messagebox.showerror("Error", f"Failed to retrieve sales data: {str(e)}")
+
+		finally:
+			# Disconnect from the database
+			self.db_manager.disconnect()
+
+		# Set the last frame
+		self.last_frame = sales_frame
+
+	# -----------------------------------------------------------USER---------------------------------------------------------------------
+
+	def create_user_welcome_page(self):
+		self.destroy_last_frame()
+
+		if self.user_logged_in:
+			self.user_welcome_frame = tk.Frame(self.root, bg='lightblue')
+			self.user_welcome_frame.pack(expand=True, fill='both')
+
+			welcome_label = tk.Label(self.user_welcome_frame, text="WELCOME", font=("Helvetica", 30, "bold"), bg='lightblue')
+			welcome_label.pack(pady=(300, 20))
+
+			order_button = tk.Button(self.user_welcome_frame, text="ORDER NOW", command=self.show_order_page, bg='orange', font=("Helvetica", 20, "bold"), padx=10, pady=5)
+			order_button.pack(pady=20)
+		else:
+			self.create_login_page()
+
+		self.last_frame = self.user_welcome_frame
+
+	def show_order_page(self):
+		self.destroy_last_frame()
+
+		self.reset_all_item_quantities()
+
+		self.order_frame_container = tk.Frame(self.root, bg='lightblue')
+		self.order_frame_container.pack(expand=True, fill='both')
+
+		title_label = tk.Label(self.order_frame_container, text="DRINKS MENU", font=("Helvetica", 24, "bold"), bg='lightblue')
+		title_label.pack(pady=40)
+
+		content_frame = tk.Frame(self.order_frame_container, bg='lightblue')
+		content_frame.pack(expand=True, fill='both')
+
+		self.db_manager.connect()
+		self.db_manager.cursor.execute("SELECT nama_minuman, harga, gambar_minuman, deskripsi FROM menu")
+		menu_data = self.db_manager.cursor.fetchall()
+		self.db_manager.disconnect()
+
+		self.menu_items = {}
+		self.update_counts_from_order()
+
+		if not menu_data:
+			no_menu_label = tk.Label(content_frame, text="No menu available", font=("Helvetica", 16), bg='lightblue')
+			no_menu_label.pack(pady=20)
+		else:
+			for i, (nama_minuman, harga, gambar_minuman, deskripsi) in enumerate(menu_data):
+				row_number = i // 5
+				col_number = i % 5
+
+				item_frame = tk.Frame(content_frame, bg='lightblue', padx=20, pady=5)
+				item_frame.grid(row=row_number, column=col_number, padx=5, pady=5, sticky="nsew")
+
+				def on_image_click(nama_minuman=nama_minuman, harga=harga, deskripsi=deskripsi):
+					self.show_description_popup(nama_minuman, harga, deskripsi)
+
+				canvas = tk.Canvas(item_frame, width=250, height=250, bg='lightblue', highlightthickness=0)
+				canvas.pack()
+				canvas.bind("<Button-1>", lambda event, nama_minuman=nama_minuman, harga=harga, deskripsi=deskripsi: on_image_click())
+
+				try:
+					image = Image.open(io.BytesIO(gambar_minuman))
+					image = image.resize((200, 200))
+					photo = ImageTk.PhotoImage(image)
+					canvas.create_image(125, 125, image=photo)
+					canvas.image = photo
+				except Exception as e:
+					error_label = tk.Label(item_frame, text=f"Error: {e}", font=("Helvetica", 16), bg='lightblue')
+					error_label.pack(pady=10)
+
+				formatted_price = f"Rp {harga:,}"
+				label_text = f"{nama_minuman}\n{formatted_price}"
+				label = tk.Label(item_frame, text=label_text, font=("Helvetica", 16), bg='lightblue')
+				label.pack(pady=(10, 20))
+
+				button_frame = tk.Frame(item_frame, bg='lightblue')
+				button_frame.pack()
+
+				plus_button = tk.Button(button_frame, text="+", font=("Helvetica", 14), command=self.create_increment_function(nama_minuman))
+				plus_button.pack(side="right", padx=5, pady=5)
+
+				quantity = 0
+				if nama_minuman in self.order:
+					quantity = sum(details['quantity'] for details in self.order[nama_minuman])
+
+				quantity_label = tk.Label(button_frame, text=quantity, font=("Helvetica", 20), bg='lightblue')
+				quantity_label.pack(side="right", padx=10, pady=5)
+				self.counts[nama_minuman] = quantity_label
+
+				minus_button = tk.Button(button_frame, text="-", font=("Helvetica", 14), command=self.create_decrement_function(nama_minuman))
+				minus_button.pack(side="right", padx=5, pady=5)
+
+				self.menu_items[nama_minuman] = {'harga': harga, 'gambar': gambar_minuman}
+
+		self.last_frame = self.order_frame_container
+
+		if hasattr(self, 'cart_frame') and self.cart_frame is not None and self.cart_frame.winfo_exists():
+			self.cart_frame.destroy()
+
+		self.cart_frame = tk.Frame(self.order_frame_container, bg='lightblue')
+		self.cart_frame.pack(side="bottom", fill='x', padx=20, pady=20)
+
+		for i in range(5):
+			self.cart_frame.grid_columnconfigure(i, weight=1)
+
+		self.order_button = tk.Button(self.cart_frame, text="Order", command=self.process_order, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		self.order_button.grid(row=0, column=3, padx=(0, 40), pady=(0, 30), sticky="e")
+
+		self.back_button = tk.Button(self.cart_frame, text="Back", command=self.go_back_to_welcome_page, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		self.back_button.grid(row=1, column=3, padx=(0, 40), pady=(0, 30), sticky="e")
+
+		cart_image = tk.PhotoImage(file="assets/cart.png")
+		cart_image_resized = cart_image.subsample(8, 8)
+
+		cart_button = tk.Button(self.cart_frame, image=cart_image_resized, command=self.show_cart, bg='lightblue', bd=0)
+		cart_button.image = cart_image_resized
+		cart_button.grid(row=0, column=5, columnspan=2, pady=10, padx=(10, 0), sticky="ns")
+
+		self.total_price_label = tk.Label(self.cart_frame, text="", font=("Helvetica", 16), bg='lightblue')
+		self.total_price_label.grid(row=1, column=5, columnspan=2, pady=(0, 30), sticky="nsew")
+
+		self.update_total_price()
+
+		self.root.update_idletasks()
+
+		for i in range(4):
+			self.cart_frame.grid_columnconfigure(i, weight=1)
+
+		item_frame_width = 250
+		self.cart_frame.grid_columnconfigure(4, minsize=item_frame_width)
+		self.cart_frame.grid_columnconfigure(5, minsize=item_frame_width)
+
+	def update_total_price(self):
+		total_price = 0
+		for item_key, details_list in self.order.items():
+			if item_key in self.menu_items:
+				harga_satuan = self.menu_items[item_key]['harga']
+				for details in details_list:
+					quantity = details['quantity']
+					total_price += quantity * harga_satuan
 			else:
-				end = len(record)
-				nex = Button(frame4, text=">>Next", command=lambda: change(+5), state=DISABLED, bg="orange")
-			if (start == 0):
-				back = Button(frame4, text="<<Back", command=lambda: change(-5), state=DISABLED, bg="orange")
+				messagebox.showerror("Error", f"Menu item '{item_key}' not found.")
+
+		formatted_price = self.format_price(total_price)
+		self.total_price_label.config(text=f"Total Price: {formatted_price}")
+
+	def create_increment_function(self, nama_minuman):
+		def increment():
+			if nama_minuman in self.counts:
+				current_count = int(self.counts[nama_minuman].cget("text"))
+				self.counts[nama_minuman].config(text=str(current_count + 1))
 			else:
-				back = Button(frame4, text="<<Back", command=lambda: change(-5), bg="orange")
+				current_count = 0
+				self.counts[nama_minuman] = tk.Label(self.root, text=str(current_count + 1))
+				self.counts[nama_minuman].pack()
 
-			e1 = Entry(frame4, width=5, borderwidth=3)
-			e2 = Entry(frame4, width=5, borderwidth=3)
-			e3 = Entry(frame4, width=5, borderwidth=3)
-			e4 = Entry(frame4, width=5, borderwidth=3)
-			e5 = Entry(frame4, width=5, borderwidth=3)
+			# Update order
+			if nama_minuman == "Sirup Dua Rasa":
+				self.show_rasa_selection()
+			else:
+				if nama_minuman not in self.order:
+					self.order[nama_minuman] = [{'quantity': 1, 'variants': []}]
+				else:
+					# Find the existing item or create a new one
+					found = False
+					for details in self.order[nama_minuman]:
+						if details['variants'] == []:
+							details['quantity'] += 1
+							found = True
+							break
+					if not found:
+						self.order[nama_minuman].append({'quantity': 1, 'variants': []})
+					self.update_total_price()
+		return increment
 
-			EntryList = [e1, e2, e3, e4, e5]
+	def create_decrement_function(self, nama_minuman):
+		def decrement():
+			if nama_minuman in self.counts:
+				current_count = int(self.counts[nama_minuman].cget("text"))
+				if current_count > 0:
+					self.counts[nama_minuman].config(text=str(current_count - 1))
+					if nama_minuman in self.order:
+						details_list = self.order[nama_minuman]
+						for details in details_list:
+							if details['quantity'] > 0:
+								details['quantity'] -= 1
+								if details['quantity'] == 0:
+									details_list.remove(details)
+								break
+						if not details_list:
+							del self.order[nama_minuman]
+						self.update_total_price()
+		return decrement
 
-			for j in range(start, end):
-				Label(frame4, text=record[j][0], bg="pale green").grid(row=currentpos, column=0, padx=5, pady=3,
-																	   sticky=W)
-				Label(frame4, text=record[j][1], bg="pale green").grid(row=currentpos, column=1, padx=10, pady=3)
-				Label(frame4, text="QTY:", bg="pale green").grid(row=currentpos, column=2, pady=3)
-				EntryList[j - start].grid(row=currentpos, column=3, pady=3)
-				EntryList[j - start].insert(0, "0")
-				Buttondisplay(j)
-				currentpos += 1
+	# End of method show_order_page
 
-			def go():
-				frame4.destroy()
-				self.order_page()
+	def show_description_popup(self, nama_minuman, harga, deskripsi):
+		description_window = tk.Toplevel(self.root)
+		description_window.title(nama_minuman)
+		description_window.geometry("300x200")
+		description_window.configure(bg='lightblue')
 
-			nex.grid(row=6, column=4, columnspan=2, padx=10, pady=10)
-			back.grid(row=6, column=0, columnspan=2, padx=10, pady=10)
-			Button(frame4, text="Cusines", command=go, bg="orange").grid(row=6, column=2, columnspan=2, padx=10,
-																		 pady=10)
-			Button(frame4, text="Generate Bill", command=Bill, bg="orange").grid(row=7, column=0, columnspan=5,
-																					 padx=7, pady=3, sticky=W + E)
+		name_label = tk.Label(description_window, text=nama_minuman, font=("Helvetica", 16, "bold"), bg='lightblue')
+		name_label.pack(pady=10)
 
-		def back(dest):
-			if (dest == frame2):
-				frame3.destroy()
-				self.order_page()
+		price_label = tk.Label(description_window, text=f"Harga: {harga}", font=("Helvetica", 14), bg='lightblue')
+		price_label.pack(pady=10)
 
-		frame2.mainloop()
+		description_label = tk.Label(description_window, text=deskripsi, font=("Helvetica", 12), bg='lightblue', wraplength=250)
+		description_label.pack(pady=10)
 
+	def hide_cart_and_total_price(self):
+		if self.cart_frame is not None and self.cart_frame.winfo_exists():
+			self.cart_frame.destroy()
 
-class Transaction():
-	def tracker(self):
+	def show_cart(self):
+		# Jika jendela cart sudah ada, kita akan menghapus konten lama dan mengisinya dengan konten baru
+		if hasattr(self, 'cart_window') and self.cart_window.winfo_exists():
+			for widget in self.cart_window.winfo_children():
+				widget.destroy()
+		else:
+			self.cart_window = tk.Toplevel(self.root)
+			self.cart_window.title("Cart")
+			self.cart_window.geometry("800x600")
+			self.cart_window.configure(bg='lightblue')
 
-		screen = turtle.Screen()
-		screen.setup(1366, 768)
-		screen.screensize(400, 400)
-		screen.bgpic('map.png')  
-		k = 3
-		for i in range(0, k):
-			a = turtle.Turtle()
-			a.hideturtle()
-			a.penup()
-			a.shapesize(3, 3, 3)
-			a.color("black", "red")
-			a.speed(i + 1)
-			a.pensize(8)
-			a.goto(-40, 350)
-			a.write("Restaurant", font=("Comic Sans MS", 16, 'normal', 'bold', 'italic', 'underline'))
-			a.showturtle()
-			a.pendown()
-			a.fd(283)
-			a.goto(243, 70)
-			a.rt(180)
-			a.fd(665)
-			a.lt(90)
-			a.fd(143)
-			a.lt(90)
-			a.fd(130)
-			a.rt(90)
-			a.fd(100)
-			a.lt(90)
-			a.write("Your Location", font=("Comic Sans MS", 16, 'normal', 'bold', 'italic', 'underline'))
-		a.clearscreen()
-		a.bye()
+		cart_frame = tk.Frame(self.cart_window, bg='lightblue')
+		cart_frame.pack(expand=True, fill='both', padx=20, pady=20)
 
-	def time_calc(self):
-		root = tk.Tk()
-		root.withdraw()
-		root.iconbitmap('Logo.ico')
+		# Create a canvas for scrolling
+		canvas = tk.Canvas(cart_frame, bg='lightblue')
+		canvas.pack(side='left', fill='both', expand=True)
 
-		dis = askstring("Time Estimator", "Enter the approximate distance from the Restaurant to your Location(in KM):")
-		
-		#Since we are not able to simulate life time situation we randomly choose the traffic
-		n=random.randint(0,2)
-		traff=["Heavy","Average","Light"]
+		scrollbar = tk.Scrollbar(cart_frame, orient='vertical', command=canvas.yview)
+		scrollbar.pack(side='right', fill='y')
 
-		r=Tk()
-		r.withdraw()	
-		s="Looks like your area has "+traff[n]+" traffic."
-		messagebox.showinfo("Delivery",s)
-		r.destroy()
+		scrollable_frame = tk.Frame(canvas, bg='lightblue')
+		scrollable_frame.bind(
+			"<Configure>",
+			lambda e: canvas.configure(
+				scrollregion=canvas.bbox("all")
+			)
+		)
 
-		#tra = askstring("Time Estimator", "traffic in your location=H-heavy/M-medium/L-little:")
-		d = int(dis)
-		if n == 0:
-			t = int((d / 20) * 60)
-		elif n == 1:
-			t = int((d / 35) * 60)
-		elif n == 2:
-			t = int((d / 50) * 60)
+		canvas.create_window((0, 0), window=scrollable_frame, anchor='nw')
+		canvas.configure(yscrollcommand=scrollbar.set)
 
-		r=Tk()
-		r.withdraw()	
-		s="Approximate time of Arrival ", t, "minutes"
-		messagebox.showinfo("Delivery",s)
-		r.destroy()
+		total_price = 0
 
-#       screen.update()
-#        time.sleep(2)
-#       screen.bgpic('C:\\Users\\harsh\\OneDrive\\Documents\\ACHINTYA!\\COMPUTERS\\Class 12\\order again.png')  
+		for nama_minuman, details_list in self.order.items():
+			for details in details_list:
+				quantity = details['quantity']
+				if quantity == 0:
+					continue
 
-count = 1
-backcount = 0
-accounts = []
+				harga_satuan = self.menu_items[nama_minuman]['harga']
+				total_harga = quantity * harga_satuan
+				gambar_minuman = self.menu_items[nama_minuman].get('gambar')
+				variants = details.get('variants', [])
 
-client = MongoClient("mongodb+srv://user1:alpine2003@cluster0-qazji.gcp.mongodb.net/<dbname>?retryWrites=true&w=majority")
-db = client.get_database('accounts_db')
-records = db.account_records
+				total_price += total_harga
 
-log = Login()
-home = Homepage()
-trans = Transaction()
+				item_frame = tk.Frame(scrollable_frame, bg='white', bd=2, relief='groove')
+				item_frame.pack(fill='x', expand=True, padx=10, pady=10)
 
-def main():
-	log.sign_in_check()
-	global accounts
-	accounts = list(map(lambda item: list(item.values()), records.find()))
-	r=Tk()
-	r.withdraw()	
-	messagebox.showinfo("Pop-Up","You have sucessfully logged in.")
-	r.destroy()
-	home.order_page()
-	home.FoodData()
+				# Display image
+				if gambar_minuman:
+					canvas_img = tk.Canvas(item_frame, width=100, height=100, bg='white', highlightthickness=0)
+					canvas_img.pack(side='left', padx=10, pady=10)
+					try:
+						image = Image.open(io.BytesIO(gambar_minuman))
+						image = image.resize((100, 100))
+						photo = ImageTk.PhotoImage(image)
+						canvas_img.create_image(50, 50, image=photo)
+						canvas_img.image = photo
+					except Exception as e:
+						error_label = tk.Label(item_frame, text=f"Error: {e}", font=("Helvetica", 10), bg='white')
+						error_label.pack(pady=10)
+				else:
+					placeholder_label = tk.Label(item_frame, text="No Image", font=("Helvetica", 10), bg='white')
+					placeholder_label.pack(side='left', padx=10, pady=10)
 
-main()
+				details_frame = tk.Frame(item_frame, bg='white')
+				details_frame.pack(side='left', padx=10, pady=10)
+
+				nama_label = tk.Label(details_frame, text=nama_minuman, font=("Helvetica", 14, "bold"), bg='white')
+				nama_label.pack(anchor='w')
+
+				quantity_frame = tk.Frame(details_frame, bg='white')
+				quantity_frame.pack(anchor='w')
+
+				minus_button = tk.Button(quantity_frame, text="-", command=lambda n=nama_minuman, r=variants[0]['rasas'] if variants else [], p=variants[0]['persentase'] if variants else 0: self.update_quantity_cart(n, r, p, -1), bg='red', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+				minus_button.pack(side='left', padx=(0, 5))
+
+				quantity_label = tk.Label(quantity_frame, text=str(quantity), font=("Helvetica", 12), bg='white')
+				quantity_label.pack(side='left', padx=(5, 5))
+
+				plus_button = tk.Button(quantity_frame, text="+", command=lambda n=nama_minuman, r=variants[0]['rasas'] if variants else [], p=variants[0]['persentase'] if variants else 0: self.update_quantity_cart(n, r, p, 1), bg='green', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+				plus_button.pack(side='left', padx=(5, 0))
+
+				harga_label = tk.Label(details_frame, text=f"Harga Satuan: {self.format_price(harga_satuan)}", font=("Helvetica", 12), bg='white')
+				harga_label.pack(anchor='w')
+
+				total_harga_label = tk.Label(details_frame, text=f"Total Harga: {self.format_price(total_harga)}", font=("Helvetica", 12), bg='white')
+				total_harga_label.pack(anchor='w')
+
+				if variants:
+					rasa_label = tk.Label(details_frame, text=f"Rasa: {', '.join(variants[0]['rasas'])}", font=("Helvetica", 12), bg='white')
+					rasa_label.pack(anchor='w')
+
+					persentase_label = tk.Label(details_frame, text=f"Persentase: {variants[0]['persentase']}", font=("Helvetica", 12), bg='white')
+					persentase_label.pack(anchor='w')
+
+		# Total price and confirm button at the bottom
+		bottom_frame = tk.Frame(self.cart_window, bg='lightblue')
+		bottom_frame.pack(fill='x', pady=(20, 20))
+
+		formatted_price = self.format_price(total_price)
+		total_price_label = tk.Label(bottom_frame, text=f"Total Price: {formatted_price}", font=("Helvetica", 16, "bold"), bg='lightblue')
+		total_price_label.pack(pady=10)
+
+		confirm_button = tk.Button(bottom_frame, text="Confirm", command=self.confirm_cart, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		confirm_button.pack()
+
+		self.total_price_label = total_price_label
+
+		self.root.update_idletasks()
+
+	def update_quantity_cart(self, nama_minuman, rasa, persentase, delta):
+		if nama_minuman in self.order:
+			for details in self.order[nama_minuman]:
+				# Periksa jika minuman memiliki varian atau tidak
+				if 'variants' in details and details['variants']:
+					for variant in details['variants']:
+						if set(variant['rasas']) == set(rasa) and variant['persentase'] == persentase:
+							details['quantity'] += delta
+							if details['quantity'] <= 0:
+								self.order[nama_minuman].remove(details)
+							if not self.order[nama_minuman]:
+								del self.order[nama_minuman]
+							self.show_cart()
+							return
+				else:
+					# Jika minuman tidak memiliki varian
+					details['quantity'] += delta
+					if details['quantity'] <= 0:
+						self.order[nama_minuman].remove(details)
+					if not self.order[nama_minuman]:
+						del self.order[nama_minuman]
+					self.show_cart()
+					return
+		self.show_cart()
+
+	def confirm_cart(self):
+		if hasattr(self, 'cart_window') and self.cart_window.winfo_exists():
+			self.cart_window.destroy()
+		self.show_order_page()
+
+	def get_rasa_options(self):
+		self.db_manager.connect()
+		try:
+			self.db_manager.cursor.execute("SELECT nama_minuman FROM menu WHERE nama_minuman NOT LIKE '%dua rasa%'")
+			rasa_options = [row[0] for row in self.db_manager.cursor.fetchall()]
+		finally:
+			self.db_manager.disconnect()
+		return rasa_options
+
+	def add_to_cart(self):
+		item_key = "Sirup Dua Rasa"
+
+		rasa_1 = self.rasa_var1.get()
+		rasa_2 = self.rasa_var2.get()
+		persentase = self.persentase_var.get()
+		quantity = self.quantity_var.get()
+
+		if item_key not in self.order:
+			self.order[item_key] = [{'quantity': quantity, 'variants': [{'rasas': [rasa_1, rasa_2], 'persentase': persentase}]}]
+		else:
+			combination_exists = False
+			for details in self.order[item_key]:
+				for variant in details['variants']:
+					if set(variant['rasas']) == set([rasa_1, rasa_2]) and variant['persentase'] == persentase:
+						details['quantity'] += quantity
+						combination_exists = True
+						break
+
+			if not combination_exists:
+				self.order[item_key].append({'quantity': quantity, 'variants': [{'rasas': [rasa_1, rasa_2], 'persentase': persentase}]})
+
+		total_quantity = sum(details['quantity'] for details in self.order[item_key])
+		if item_key not in self.counts:
+			self.counts[item_key] = tk.Label(self.root, text=str(total_quantity))
+		else:
+			if self.counts[item_key].winfo_exists():
+				self.counts[item_key].config(text=str(total_quantity))
+			else:
+				self.counts[item_key] = tk.Label(self.root, text=str(total_quantity))
+
+		self.show_order_page()
+
+	def decrement_quantity(self):
+		current_quantity = self.quantity_var.get()
+		if current_quantity > 1:
+			self.quantity_var.set(current_quantity - 1)
+
+	def increment_quantity(self):
+		current_quantity = self.quantity_var.get()
+		self.quantity_var.set(current_quantity + 1)
+
+	def show_rasa_selection(self):
+		self.destroy_last_frame()
+
+		rasa_selection_frame = tk.Frame(self.root, bg='lightblue')
+		rasa_selection_frame.pack(expand=True, fill='both')
+
+		title_label = tk.Label(rasa_selection_frame, text="Pilih Rasa untuk Sirup Dua Rasa", font=("Helvetica", 24, "bold"), bg='lightblue')
+		title_label.pack(pady=20)
+
+		self.rasa_var1 = tk.StringVar()
+		self.rasa_var2 = tk.StringVar()
+		self.persentase_var = tk.StringVar()
+		self.quantity_var = tk.IntVar(value=1)
+
+		rasa_options = self.get_rasa_options()
+		if not rasa_options or len(rasa_options) < 2:
+			messagebox.showerror("Error", "Tidak ada data rasa yang cukup di database.")
+			return
+
+		self.rasa_var1.set(rasa_options[0])
+		self.rasa_var2.set(rasa_options[1])
+
+		def update_rasa2_options(*args):
+			updated_rasa_options_2 = [rasa for rasa in rasa_options if rasa != self.rasa_var1.get()]
+			self.rasa_var2.set(updated_rasa_options_2[0])
+			menu = rasa_dropdown2["menu"]
+			menu.delete(0, "end")
+			for rasa in updated_rasa_options_2:
+				menu.add_command(label=rasa, command=lambda value=rasa: self.rasa_var2.set(value))
+
+		self.rasa_var1.trace("w", update_rasa2_options)
+
+		tk.Label(rasa_selection_frame, text="Rasa 1", font=("Helvetica", 16), bg='lightblue').pack(side="top", pady=10)
+		rasa_dropdown1 = tk.OptionMenu(rasa_selection_frame, self.rasa_var1, *rasa_options)
+		rasa_dropdown1.config(bg='white', fg='black', font=('Helvetica', 12))
+		rasa_dropdown1.pack(pady=5, padx=10, ipadx=5, ipady=3)
+
+		tk.Label(rasa_selection_frame, text="Rasa 2", font=("Helvetica", 16), bg='lightblue').pack(side="top", pady=10)
+		rasa_dropdown2 = tk.OptionMenu(rasa_selection_frame, self.rasa_var2, *[rasa for rasa in rasa_options if rasa != self.rasa_var1.get()])
+		rasa_dropdown2.config(bg='white', fg='black', font=('Helvetica', 12))
+		rasa_dropdown2.pack(pady=5, padx=10, ipadx=5, ipady=3)
+
+		persentase_frame = tk.Frame(rasa_selection_frame, bg='lightblue')
+		persentase_frame.pack(pady=5, padx=10)
+
+		tk.Label(persentase_frame, text="Persentase", font=("Helvetica", 16), bg='lightblue').pack(side="top", pady=10)
+		persentase_options = ["50% - 50%", "25% - 75%"]
+		self.persentase_var.set(persentase_options[0])
+		persentase_dropdown = tk.OptionMenu(persentase_frame, self.persentase_var, *persentase_options)
+		persentase_dropdown.config(bg='white', fg='black', font=('Helvetica', 12))
+		persentase_dropdown.pack(side="top", ipadx=5, ipady=3)
+
+		default_label = tk.Label(persentase_frame, text="Default: 50% - 50%", font=("Helvetica", 12), bg='lightblue')
+		default_label.pack(side="bottom", pady=10)
+
+		quantity_frame = tk.Frame(rasa_selection_frame, bg='lightblue')
+		quantity_frame.pack(pady=10)
+
+		minus_button = tk.Button(quantity_frame, text="-", command=self.decrement_quantity, bg='red', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		minus_button.pack(side="left", padx=5)
+
+		quantity_label = tk.Label(quantity_frame, textvariable=self.quantity_var, font=("Helvetica", 16), bg='lightblue')
+		quantity_label.pack(side="left", padx=10)
+
+		plus_button = tk.Button(quantity_frame, text="+", command=self.increment_quantity, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		plus_button.pack(side="left", padx=5)
+
+		add_button = tk.Button(rasa_selection_frame, text="Add to Cart", command=self.add_to_cart, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		add_button.pack(pady=20)
+
+		back_button = tk.Button(rasa_selection_frame, text="Back", command=self.show_order_page, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		back_button.pack(pady=20)
+
+		self.last_frame = rasa_selection_frame
+
+	def add_order(self):
+		# Initialize order if not already initialized
+		if not hasattr(self, 'order'):
+			self.order = {}
+
+			# Update initial order from counts displayed on the order page
+		self.update_order_from_counts()
+
+		# If order is not empty, process it
+		if self.order:
+			# Show order page after adding order
+			self.show_order_page()
+		else:
+			# If order is empty, directly go back to show_order_page
+			messagebox.showinfo("Info", "No items added to the order.")
+			self.show_order_page()
+
+	def update_order_from_counts(self):
+		for item, quantity_label in list(self.counts.items()):
+			if isinstance(quantity_label, tk.Label) and quantity_label.winfo_exists():
+				try:
+					quantity = int(quantity_label.cget("text"))
+					if quantity > 0:
+						if item not in self.order:
+							self.order[item] = [{'quantity': quantity, 'variants': []}]
+						else:
+							self.order[item][0]['quantity'] = quantity
+				except Exception as e:
+					print(f"Error: {e}")
+			else:
+				# Remove invalid labels from the counts dictionary
+				del self.counts[item]
+
+	def process_order(self):
+		if not hasattr(self, 'menu_items'):
+			messagebox.showinfo("Order Placed", "Menu belum diinisialisasi.")
+			return
+
+		order_details = []
+		self.db_manager.connect()
+		query = "SELECT nama_minuman, harga FROM menu"
+		self.db_manager.cursor.execute(query)
+		menu_items = {item[0]: item[1] for item in self.db_manager.cursor.fetchall()}
+		self.db_manager.disconnect()
+
+		total_order_quantity = 0  # Variable baru untuk menyimpan total jumlah pesanan
+
+		for item, quantity_label in self.counts.items():
+			quantity = int(quantity_label.cget("text"))
+			total_order_quantity += quantity  # Menambahkan jumlah pesanan saat ini ke total pesanan
+			if quantity > 0:
+				harga_satuan = menu_items.get(item, 0)
+				total_harga = harga_satuan * quantity
+
+				if item == "Sirup Dua Rasa":
+					rasa_var1 = self.rasa_var1.get()
+					rasa_var2 = self.rasa_var2.get()
+					persentase_var = self.persentase_var.get()
+					pilihan_rasa = f"{rasa_var1} + {rasa_var2}"
+				else:
+					pilihan_rasa = item
+					persentase_var = 100
+
+				order_details.append((item, quantity, harga_satuan, total_harga, pilihan_rasa, persentase_var))
+
+		if not order_details:
+			messagebox.showinfo("Order Placed", "Tidak ada item yang dipesan.")
+			return
+
+		# Anda mungkin perlu melakukan beberapa penyesuaian di sini sesuai dengan kebutuhan aplikasi Anda
+		for item, quantity, harga_satuan, total_harga, pilihan_rasa, persentase_var in order_details:
+			# Hanya tambahkan item ke pesanan jika belum ada dalam pesanan
+			if item not in self.order:
+				self.order[item] = {'quantity': quantity, 'rasa': [pilihan_rasa], 'persentase': [persentase_var]}
+
+		# Lanjutkan dengan menampilkan ringkasan pesanan
+		self.show_order_summary()  # Menyertakan total pesanan saat memanggil show_order_summary
+
+	def go_back_to_welcome_page(self):
+		self.destroy_last_frame()
+		self.create_user_welcome_page()
+
+	def show_order_summary(self):
+		self.destroy_last_frame()
+
+		self.order_summary_frame = tk.Frame(self.root, bg='lightblue')
+		self.order_summary_frame.pack(expand=True, fill='both')
+
+		summary_label = tk.Label(self.order_summary_frame, text="ORDER SUMMARY", font=("Helvetica", 18, "bold"), bg='lightblue')
+		summary_label.pack(pady=(40, 20), padx=20)
+
+		content_frame = tk.Frame(self.order_summary_frame, bg='lightblue')
+		content_frame.pack(expand=True, fill='both', padx=20, pady=(0, 20))
+
+		# Create a canvas for scrolling
+		canvas = tk.Canvas(content_frame, bg='lightblue')
+		canvas.pack(side='left', fill='both', expand=True)
+
+		scrollbar = tk.Scrollbar(content_frame, orient='vertical', command=canvas.yview)
+		scrollbar.pack(side='right', fill='y')
+
+		scrollable_frame = tk.Frame(canvas, bg='lightblue')
+		scrollable_frame.bind(
+			"<Configure>",
+			lambda e: canvas.configure(
+				scrollregion=canvas.bbox("all")
+			)
+		)
+		canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+		canvas.configure(yscrollcommand=scrollbar.set)
+
+		row_number = 0
+		total_price = 0
+
+		self.order_details = []  # Reset order_details
+
+		for nama_minuman, details_list in self.order.items():
+			for details in details_list:
+				quantity = details['quantity']
+				if quantity == 0:
+					continue
+				harga_satuan = self.menu_items[nama_minuman]['harga']
+				total_harga = quantity * harga_satuan
+				gambar_minuman = self.menu_items[nama_minuman].get('gambar')
+
+				# Append to order_details with the required information
+				self.order_details.append({
+					'nama_minuman': nama_minuman,
+					'quantity': quantity,
+					'total_price': total_harga,
+					'variants': details.get('variants', [])  # Include variants in order_details
+				})
+
+				total_price += total_harga
+
+				item_frame = tk.Frame(scrollable_frame, bg='white', bd=2, relief='groove')
+				item_frame.pack(fill='x', padx=10, pady=10)
+				row_number += 1
+
+				# Display image
+				if gambar_minuman:
+					canvas_item = tk.Canvas(item_frame, width=100, height=100, bg='white', highlightthickness=0)
+					canvas_item.pack(side='left', padx=10, pady=10)
+					try:
+						image = Image.open(io.BytesIO(gambar_minuman))
+						image = image.resize((100, 100))
+						photo = ImageTk.PhotoImage(image)
+						canvas_item.create_image(50, 50, image=photo)
+						canvas_item.image = photo
+					except Exception as e:
+						error_label = tk.Label(item_frame, text=f"Error: {e}", font=("Helvetica", 10), bg='white')
+						error_label.pack(pady=10)
+				else:
+					placeholder_label = tk.Label(item_frame, text="No Image", font=("Helvetica", 10), bg='white')
+					placeholder_label.pack(side='left', padx=10, pady=10)
+
+				details_frame = tk.Frame(item_frame, bg='white')
+				details_frame.pack(side='left', fill='x', expand=True, padx=10, pady=10)
+
+				# Display details
+				nama_label = tk.Label(details_frame, text=nama_minuman, font=("Helvetica", 14, "bold"), bg='white')
+				nama_label.pack(anchor='w')
+
+				quantity_frame = tk.Frame(details_frame, bg='white')
+				quantity_frame.pack(anchor='w')
+
+				if 'sirup dua rasa' in nama_minuman.lower() and details.get('variants'):
+					variant = details['variants'][0]
+					minus_button = tk.Button(quantity_frame, text="-", command=lambda n=nama_minuman, r=variant['rasas'], p=variant['persentase']: self.update_quantity(n, -1, r, p), bg='red', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+					plus_button = tk.Button(quantity_frame, text="+", command=lambda n=nama_minuman, r=variant['rasas'], p=variant['persentase']: self.update_quantity(n, 1, r, p), bg='green', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+				else:
+					minus_button = tk.Button(quantity_frame, text="-", command=lambda n=nama_minuman: self.update_quantity(n, -1), bg='red', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+					plus_button = tk.Button(quantity_frame, text="+", command=lambda n=nama_minuman: self.update_quantity(n, 1), bg='green', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+
+				minus_button.pack(side='left', padx=(0, 5))
+				quantity_label = tk.Label(quantity_frame, text=str(quantity), font=("Helvetica", 12), bg='white')
+				quantity_label.pack(side='left', padx=(5, 5))
+				plus_button.pack(side='left', padx=(5, 0))
+
+				harga_label = tk.Label(details_frame, text=f"Harga Satuan: {self.format_price(harga_satuan)}", font=("Helvetica", 12), bg='white')
+				harga_label.pack(anchor='w')
+
+				total_harga_label = tk.Label(details_frame, text=f"Total Harga: {self.format_price(total_harga)}", font=("Helvetica", 12), bg='white')
+				total_harga_label.pack(anchor='w')
+
+				if 'sirup dua rasa' in nama_minuman.lower() and details.get('variants'):
+					variant = details['variants'][0]
+					rasa_label = tk.Label(details_frame, text=f"Rasa: {', '.join(variant['rasas'])}", font=("Helvetica", 12), bg='white')
+					rasa_label.pack(anchor='w')
+
+					persentase_label = tk.Label(details_frame, text=f"Persentase: {variant['persentase']}", font=("Helvetica", 12), bg='white')
+					persentase_label.pack(anchor='w')
+
+				# Separate row for delete_button
+				delete_button_frame = tk.Frame(item_frame, bg='white')
+				delete_button_frame.pack(side='right')
+
+				delete_button = tk.Button(delete_button_frame, text="Delete", command=lambda n=nama_minuman: self.delete_order(n), bg='red', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+				delete_button.pack(side='right', padx=(0, 25))
+
+		total_price_label = tk.Label(self.order_summary_frame, text=f"Total Price: {self.format_price(total_price)}", font=("Helvetica", 16), bg='lightblue')
+		total_price_label.pack(pady=(0, 20))
+
+		button_frame = tk.Frame(self.order_summary_frame, bg='lightblue')
+		button_frame.pack(side='bottom', pady=20)
+
+		add_order_button = tk.Button(button_frame, text="Add Order", command=self.add_order, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		add_order_button.pack(pady=20)
+
+		confirm_button = tk.Button(button_frame, text="Confirm Order", command=self.confirm_order, bg='blue', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		confirm_button.pack(pady=20)
+
+		self.last_frame = self.order_summary_frame
+
+	def delete_order(self, nama_minuman):
+		confirmation = messagebox.askyesno("Konfirmasi", f"Are you sure you want to remove {nama_minuman} from the order?")
+		if confirmation:
+			try:
+				del self.order[nama_minuman]
+				self.show_order_summary()
+			except KeyError as e:
+				print(f"Error deleting order: {e}")
+
+	def update_quantity(self, nama_minuman, delta, rasa=None, persentase=None):
+		if nama_minuman in self.order:
+			for details in self.order[nama_minuman]:
+				if 'variants' in details and details['variants']:
+					for variant in details['variants']:
+						if rasa is not None and persentase is not None:
+							if set(variant['rasas']) == set(rasa) and variant['persentase'] == persentase:
+								details['quantity'] += delta
+								if details['quantity'] <= 0:
+									self.order[nama_minuman].remove(details)
+								if not self.order[nama_minuman]:
+									del self.order[nama_minuman]
+								self.show_order_summary()
+								return
+				else:
+					details['quantity'] += delta
+					if details['quantity'] <= 0:
+						self.order[nama_minuman].remove(details)
+					if not self.order[nama_minuman]:
+						del self.order[nama_minuman]
+					self.show_order_summary()
+					return
+		self.show_order_summary()
+
+	def update_counts_from_order(self):
+		for item, details_list in self.order.items():
+			if item in self.counts:
+				total_quantity = sum(details['quantity'] for details in details_list)
+				quantity_label = self.counts[item]
+				if quantity_label.winfo_exists():  # Check if the label still exists
+					quantity_label.config(text=str(total_quantity))
+
+	def confirm_order(self):
+		if not hasattr(self, 'order_details'):
+			self.populate_order_details()  # Populate order details if not already done
+		self.confirm_order_and_generate_qr()
+
+	def populate_order_details(self):
+		self.order_details = []
+		for nama_minuman, details_list in self.order.items():
+			for details in details_list:
+				quantity = details['quantity']
+				harga_satuan = self.menu_items[nama_minuman]['harga']
+				total_harga = quantity * harga_satuan
+				rasa = []
+				persentase = []
+
+				# Handling variants for 'Sirup Dua Rasa'
+				if 'variants' in details and 'sirup dua rasa' in nama_minuman.lower():
+					variant = details['variants'][0]
+					if isinstance(variant, dict):  # Check if variant is a dictionary
+						rasa = variant.get('rasas', [])
+						persentase = variant.get('persentase', [])
+				else:  # If not 'Sirup Dua Rasa', assign default empty rasa and persentase
+					if 'sirup dua rasa' not in nama_minuman.lower():
+						rasa = ''
+						persentase = ''
+
+				self.order_details.append({
+					'nama_minuman': nama_minuman,
+					'quantity': quantity,
+					'total_price': total_harga,
+					'rasa': rasa,
+					'persentase': persentase
+				})
+
+		print("Order Details Debug:", self.order_details)  # Debug print
+
+	def confirm_order_and_generate_qr(self):
+		if not hasattr(self, 'order_details'):
+			self.populate_order_details()  # Populate order details if not already done
+
+		print("Order Details:", self.order_details)  # Debug print
+
+		total_amount = sum(order_detail['total_price'] for order_detail in self.order_details)
+		print("Total Amount:", total_amount)  # Debug print
+
+		formatted_price = self.format_price(total_amount)
+		print("Formatted Price:", formatted_price)  # Debug print
+
+		reference_id = "testing_id_123"  # Define reference_id here
+
+		confirmation = messagebox.askyesno("Confirmation", f"The total amount to be paid is {formatted_price}. Do you want to proceed and generate the QR code?")
+
+		if confirmation:
+			self.generate_qr_code(reference_id, total_amount)
+
+	def generate_qr_code(self, reference_id, total_amount):
+		headers = {
+			'Content-Type': 'application/json',
+			'Authorization': f'Basic {base64.b64encode((API_KEY + ":").encode()).decode()}',
+			'api-version': '2022-07-31'
+		}
+
+		data = {
+			"reference_id": reference_id,
+			"type": "DYNAMIC",
+			"currency": "IDR",
+			"amount": total_amount,
+			"expires_at": (datetime.datetime.utcnow() + datetime.timedelta(hours=1)).isoformat() + 'Z'
+		}
+
+		response = requests.post('https://api.xendit.co/qr_codes', headers=headers, json=data)
+
+		if response.status_code == 201:
+			qr_code_data = response.json()
+			qr_code_string = qr_code_data.get('qr_string')
+			self.show_payment_page(qr_code_string)
+		else:
+			error_message = response.text
+			messagebox.showerror("Error", f"Failed to create QR code: {error_message}")
+
+	def show_payment_page(self, qr_code_string):
+		self.destroy_last_frame()
+		payment_page_frame = tk.Frame(self.root, bg='lightblue')
+		payment_page_frame.pack(expand=True, fill='both')
+
+		payment_label = tk.Label(payment_page_frame, text="PAYMENT PAGE", font=("Helvetica", 20, "bold"), bg='lightyellow')
+		payment_label.pack(pady=(80, 30), padx=20)
+
+		qr = qrcode.QRCode(
+			version=1,
+			error_correction=qrcode.constants.ERROR_CORRECT_L,
+			box_size=10,
+			border=4,
+		)
+		qr.add_data(qr_code_string)
+		qr.make(fit=True)
+
+		img = qr.make_image(fill='black', back_color='white')
+		img = img.resize((400, 400), Image.Resampling.LANCZOS)
+
+		qr_image = ImageTk.PhotoImage(img)
+
+		qr_label = tk.Label(payment_page_frame, image=qr_image)
+		qr_label.image = qr_image  # Keep a reference to avoid garbage collection
+		qr_label.pack(pady=(0, 50))
+
+		confirm_payment_button = tk.Button(payment_page_frame, text="Confirm Payment and Order", command=self.confirm_payment_and_order, bg='blue', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		confirm_payment_button.pack(pady=20)
+
+		back_button = tk.Button(payment_page_frame, text="Back", command=self.show_order_summary, bg='red', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+		back_button.pack(pady=10)
+
+		self.last_frame = payment_page_frame
+
+	def confirm_payment_and_order(self):
+		try:
+			self.db_manager.connect()
+			self.populate_order_details()
+
+			# Save all orders to the database
+			for order_detail in self.order_details:
+				nama_minuman = order_detail['nama_minuman']
+				pilihan_rasa = ', '.join(order_detail.get('rasa', [])) if 'Sirup Dua Rasa' in nama_minuman else ''
+				persentase = order_detail.get('persentase', '') if 'Sirup Dua Rasa' in nama_minuman else ''
+				jumlah = order_detail['quantity']
+				harga_satuan = self.menu_items[nama_minuman]['harga']
+				total_harga = order_detail['total_price']
+				status_pembayaran = 1  # status_pembayaran: 1 (paid)
+				status_pesanan = 'Completed'  # status_pesanan: Completed
+
+				print(f"Inserting order: {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
+
+				self.db_manager.insert_order(
+					nama_minuman,
+					pilihan_rasa,
+					persentase,
+					jumlah,
+					harga_satuan,
+					total_harga,
+					status_pembayaran,
+					status_pesanan
+				)
+
+			messagebox.showinfo("Payment Processed", "Payment processed successfully. Your order is in process.")
+			# Reset the quantity of all items to 0
+			self.reset_all_item_quantities()
+			self.create_user_welcome_page()
+		except Exception as e:
+			messagebox.showerror("Error", f"Failed to process payment: {str(e)}")
+		finally:
+			self.db_manager.disconnect()
+
+	def reset_all_item_quantities(self):
+		for nama_minuman, details in self.order.items():
+			if 'quantity' in details:
+				details['quantity'] = 0
+			elif 'variants' in details:
+				for variant in details['variants']:
+					variant['quantity'] = 0
+
+	def destroy_last_frame(self):
+		if hasattr(self, 'last_frame') and self.last_frame is not None:
+			self.last_frame.destroy()
+
+		self.hide_cart_and_total_price()
+
+		# Remove related attributes if they exist
+		attributes_to_remove = ['login_frame', 'user_welcome_frame', 'admin_welcome_frame', 'admin_frame', 'order_frame_container']
+		for attr in attributes_to_remove:
+			if hasattr(self, attr):
+				delattr(self, attr)
+
+if __name__ == "__main__":
+	root = tk.Tk()
+	root.attributes('-fullscreen', True)
+	app = App(root)
+	root.mainloop()
