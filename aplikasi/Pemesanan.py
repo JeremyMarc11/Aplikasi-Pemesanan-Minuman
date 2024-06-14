@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, ttk, filedialog, simpledialog
 import mysql.connector
 from PIL import Image, ImageTk
 import io
@@ -8,7 +8,15 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import requests
 import qrcode
 import base64
+from datetime import datetime
 import datetime
+import uuid
+import csv
+from tkcalendar import DateEntry
+import socket
+import time
+import threading
+import pandas as pd
 
 class DatabaseManager:
     def __init__(self, host, port, username, password, database):
@@ -42,13 +50,13 @@ class DatabaseManager:
         except mysql.connector.Error as e:
             print("Error:", e)
 
-    def insert_order(self, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan):
+    def insert_order(self, order_date, user_id, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan):
         query = """
         INSERT INTO ringkasan_pesanan 
-        (nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        (order_date, user_id, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        values = (nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan)
+        values = (order_date, user_id, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan)
         try:
             self.cursor.execute(query, values)
             self.conn.commit()
@@ -105,7 +113,15 @@ class DatabaseManager:
             self.disconnect()
         return menu_items
 
+    def fetch_minuman_data(self):
+        self.connect()
+        self.cursor.execute("SELECT kode_minuman, nama_minuman, pilihan_rasa, persentase FROM minuman_data")
+        minuman_data = self.cursor.fetchall()
+        self.disconnect()
+        return minuman_data
+
 API_KEY = 'xnd_development_KQmfElKh3di1BvU2zs369Lx5iIU71CPcLnHNwiAe5Nqo8Gpsi6AEfIrMuFVUF8V'
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -129,6 +145,18 @@ class App:
         self.user_logged_in = False
         self.admin_logged_in = False
         self.old_order = {}
+        self.cart_quantities = {}
+        self.minuman_data = {}
+        self.load_minuman_data()
+        self.current_user_id = None
+        self.previous_user_id = None
+        self.sales_data = []
+
+        self.sales_data_frame = None
+        self.sales_table = None
+        self.sales_data = None
+        self.filter_frame = None
+        self.last_frame = None
 
         # Koneksi ke database dan ambil data menu
         self.db_manager.connect()
@@ -178,7 +206,7 @@ class App:
         # Atur atribut menu dengan menu_items yang telah diinisialisasi
         self.menu = menu_items
 
-# -----------------------------------------------------------LOGIN---------------------------------------------------------------------
+    # -----------------------------------------------------------LOGIN---------------------------------------------------------------------
 
     def create_login_page(self):
         self.destroy_last_frame()
@@ -190,18 +218,18 @@ class App:
         welcome_label.pack(pady=(250, 20))
 
         self.username_entry = tk.Entry(self.login_frame, font=("Helvetica", 20))
-        self.username_entry.insert(0, "user")
+        self.username_entry.insert(0, "admin")
         self.username_entry.pack(pady=10)
 
         self.password_entry = tk.Entry(self.login_frame, show="*", font=("Helvetica", 20))
-        self.password_entry.insert(0, "user123")
+        self.password_entry.insert(0, "admin123")
         self.password_entry.pack(pady=10)
 
         login_button = tk.Button(self.login_frame, text="LOGIN", command=self.login, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         login_button.pack(pady=20)
 
         self.last_frame = self.login_frame
-        
+
     def login(self):
         username = self.username_entry.get()
         password = self.password_entry.get()
@@ -211,7 +239,7 @@ class App:
             try:
                 self.db_manager = DatabaseManager('127.0.0.1', 3306, 'root', '', 'pemesanan_minuman')
                 messagebox.showinfo("Login Success", "Berhasil login sebagai user.")
-                self.create_user_welcome_page() 
+                self.create_user_welcome_page()
             except Exception as e:
                 messagebox.showerror("Database Connection Error", f"Gagal terhubung ke database: {str(e)}")
             finally:
@@ -221,7 +249,7 @@ class App:
             try:
                 self.db_manager = DatabaseManager('127.0.0.1', 3306, 'root', '', 'pemesanan_minuman')
                 messagebox.showinfo("Login Success", "Berhasil login sebagai admin.")
-                self.create_admin_welcome_page()  
+                self.create_admin_welcome_page()
             except Exception as e:
                 messagebox.showerror("Database Connection Error", f"Gagal terhubung ke database: {str(e)}")
             finally:
@@ -229,13 +257,32 @@ class App:
         else:
             messagebox.showerror("Login Failed", "Nama pengguna atau kata sandi salah.")
 
-    def logout(self):
-        self.user_logged_in = False
-        self.db_manager.disconnect()  # Pastikan untuk menutup koneksi setelah logout
-        self.create_login_page()
+    def create_user_welcome_page(self):
+        self.destroy_last_frame()
 
-# -----------------------------------------------------------ADMIN---------------------------------------------------------------------
-        
+        if self.user_logged_in:
+            self.user_welcome_frame = tk.Frame(self.root, bg='lightblue')
+            self.user_welcome_frame.pack(expand=True, fill='both')
+
+            welcome_label = tk.Label(self.user_welcome_frame, text="WELCOME", font=("Helvetica", 30, "bold"), bg='lightblue')
+            welcome_label.pack(pady=(300, 20))
+
+            order_button = tk.Button(self.user_welcome_frame, text="ORDER NOW", command=self.create_order_for_user, bg='orange', font=("Helvetica", 20, "bold"), padx=10, pady=5)
+            order_button.pack(pady=20)
+
+            # Load gambar logout
+            logout_image = tk.PhotoImage(file="assets/logout.png")  # Ganti dengan path file gambar logout yang sebenarnya
+            logout_image_resized = logout_image.subsample(5, 5)
+
+            # Buat tombol logout dengan gambar yang telah diubah ukurannya
+            logout_button = tk.Button(self.user_welcome_frame, image=logout_image_resized, command=self.user_logout, bg='lightblue', bd=0)
+            logout_button.image = logout_image_resized  # Penting untuk mempertahankan referensi gambar yang diubah ukurannya
+            logout_button.pack(side="left", anchor="sw", padx=20, pady=20)  # Meletakkan tombol di bawah kiri
+        else:
+            self.create_login_page()
+
+        self.last_frame = self.user_welcome_frame
+
     def create_admin_welcome_page(self):
         self.destroy_last_frame()
 
@@ -246,8 +293,7 @@ class App:
             welcome_label = tk.Label(self.admin_welcome_frame, text="WELCOME ADMIN", font=("Helvetica", 30, "bold"), bg='lightblue')
             welcome_label.pack(pady=(300, 20))
 
-            enter_button = tk.Button(self.admin_welcome_frame, text="ENTER", command=self.create_admin_page, bg='orange',
-                                    font=("Helvetica", 20, "bold"), padx=10, pady=5)
+            enter_button = tk.Button(self.admin_welcome_frame, text="ENTER", command=self.create_admin_page, bg='orange', font=("Helvetica", 20, "bold"), padx=10, pady=5)
             enter_button.pack(pady=20)
 
             # Load gambar logout
@@ -263,6 +309,40 @@ class App:
 
         self.last_frame = self.admin_welcome_frame
 
+    def user_logout(self):
+        # Popup dialog untuk memasukkan password admin
+        password = simpledialog.askstring("Admin Password", "Enter Admin Password:", show='*')
+
+        if password is not None:
+            if self.verify_admin_password(password):
+                self.user_logged_in = False
+                messagebox.showinfo("Logout", "Successfully logged out.")
+                self.create_login_page()
+            else:
+                messagebox.showerror("Error", "Invalid admin password.")
+        else:
+            messagebox.showwarning("Warning", "Logout cancelled.")
+
+    def verify_admin_password(self, password):
+        # Ganti dengan metode verifikasi password admin yang sesuai
+        # Misalnya, cek password dengan database
+        self.db_manager.connect()
+        self.db_manager.cursor.execute("SELECT password FROM users WHERE username = 'admin'")
+        result = self.db_manager.cursor.fetchone()
+        self.db_manager.disconnect()
+
+        if result and result[0] == password:
+            return True
+        return False
+    def logout(self):
+        self.user_logged_in = False
+        self.admin_logged_in = False
+        self.db_manager.disconnect()  # Pastikan untuk menutup koneksi setelah logout
+        messagebox.showinfo("Logout", "Successfully logged out.")
+        self.create_login_page()
+
+    # -----------------------------------------------------------ADMIN---------------------------------------------------------------------
+
     def create_admin_page(self):
         self.destroy_last_frame()
 
@@ -272,20 +352,21 @@ class App:
         title_label = tk.Label(self.admin_frame, text="Admin Page", font=("Helvetica", 24, "bold"), bg='lightblue')
         title_label.pack(pady=(50, 20))
 
-        add_menu_button = tk.Button(self.admin_frame, text="Add Menu", command=self.add_menu_page, bg='orange',
-                                    font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        user_management_button = tk.Button(self.admin_frame, text="Manage Users", command=self.manage_users, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        user_management_button.pack(pady=20)
+
+        add_menu_button = tk.Button(self.admin_frame, text="Add Menu", command=self.add_menu_page, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         add_menu_button.pack(pady=20)
 
-        view_menu_button = tk.Button(self.admin_frame, text="View Menu", command=self.view_menu, bg='orange',
-                             font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        view_menu_button = tk.Button(self.admin_frame, text="View Menu", command=self.view_menu, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         view_menu_button.pack(pady=20)
 
         delete_menu_button = tk.Button(self.admin_frame, text="Delete Menu", command=self.delete_menu_page, bg='orange',
-                                    font=("Helvetica", 12, "bold"), padx=10, pady=5)
+                                       font=("Helvetica", 12, "bold"), padx=10, pady=5)
         delete_menu_button.pack(pady=20)
 
         view_sales_button = tk.Button(self.admin_frame, text="View Sales Data", command=self.view_sales_data, bg='orange',
-                                    font=("Helvetica", 12, "bold"), padx=10, pady=5)
+                                      font=("Helvetica", 12, "bold"), padx=10, pady=5)
         view_sales_button.pack(pady=20)
 
         back_button = tk.Button(self.admin_frame, text="Back", command=self.create_admin_welcome_page, bg='orange',
@@ -293,6 +374,166 @@ class App:
         back_button.pack(pady=20)
 
         self.last_frame = self.admin_frame
+
+    # -----------------------------------------------------------Mengelola User---------------------------------------------------------------------
+
+    def manage_users(self):
+        self.destroy_last_frame()
+
+        self.manage_users_frame = tk.Frame(self.root, bg='lightblue')
+        self.manage_users_frame.pack(expand=True, fill='both')
+
+        title_label = tk.Label(self.manage_users_frame, text="Manage Users", font=("Helvetica", 24, "bold"), bg='lightblue')
+        title_label.pack(pady=(50, 20))
+
+        add_user_button = tk.Button(self.manage_users_frame, text="Add User", command=self.add_user_page, bg='orange',
+                                    font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        add_user_button.pack(pady=20)
+
+        delete_user_button = tk.Button(self.manage_users_frame, text="Delete User", command=self.delete_user_page, bg='orange',
+                                       font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        delete_user_button.pack(pady=20)
+
+        update_user_button = tk.Button(self.manage_users_frame, text="Update User Access", command=self.update_user_access_page, bg='orange',
+                                       font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        update_user_button.pack(pady=20)
+
+        back_button = tk.Button(self.manage_users_frame, text="Back", command=self.create_admin_page, bg='orange',
+                                font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button.pack(pady=20)
+
+        self.last_frame = self.manage_users_frame
+
+    def add_user_page(self):
+        self.destroy_last_frame()
+
+        self.add_user_frame = tk.Frame(self.root, bg='lightblue')
+        self.add_user_frame.pack(expand=True, fill='both')
+
+        title_label = tk.Label(self.add_user_frame, text="Add User", font=("Helvetica", 24, "bold"), bg='lightblue')
+        title_label.pack(pady=(50, 20))
+
+        username_label = tk.Label(self.add_user_frame, text="Username", font=("Helvetica", 16), bg='lightblue')
+        username_label.pack(pady=10)
+        self.add_user_username_entry = tk.Entry(self.add_user_frame, font=("Helvetica", 16))
+        self.add_user_username_entry.pack(pady=10)
+
+        password_label = tk.Label(self.add_user_frame, text="Password", font=("Helvetica", 16), bg='lightblue')
+        password_label.pack(pady=10)
+        self.add_user_password_entry = tk.Entry(self.add_user_frame, font=("Helvetica", 16), show="*")
+        self.add_user_password_entry.pack(pady=10)
+
+        role_label = tk.Label(self.add_user_frame, text="Role", font=("Helvetica", 16), bg='lightblue')
+        role_label.pack(pady=10)
+        self.add_user_role_combobox = ttk.Combobox(self.add_user_frame, values=["admin", "user", "checker"], font=("Helvetica", 16))
+        self.add_user_role_combobox.pack(pady=10)
+
+        add_button = tk.Button(self.add_user_frame, text="Add", command=self.add_user, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        add_button.pack(pady=20)
+
+        back_button = tk.Button(self.add_user_frame, text="Back", command=self.manage_users, bg='orange',
+                                font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button.pack(pady=20)
+
+        self.last_frame = self.add_user_frame
+
+    def add_user(self):
+        username = self.add_user_username_entry.get()
+        password = self.add_user_password_entry.get()
+        role = self.add_user_role_combobox.get()
+
+        try:
+            self.db_manager.connect()
+            query = "INSERT INTO users (username, password, role) VALUES (%s, %s, %s)"
+            self.db_manager.cursor.execute(query, (username, password, role))
+            self.db_manager.conn.commit()
+            self.db_manager.disconnect()
+
+            messagebox.showinfo("Success", "User added successfully.")
+            self.add_user_page()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to add user: {e}")
+
+    def delete_user_page(self):
+        self.destroy_last_frame()
+
+        self.delete_user_frame = tk.Frame(self.root, bg='lightblue')
+        self.delete_user_frame.pack(expand=True, fill='both')
+
+        title_label = tk.Label(self.delete_user_frame, text="Delete User", font=("Helvetica", 24, "bold"), bg='lightblue')
+        title_label.pack(pady=(50, 20))
+
+        username_label = tk.Label(self.delete_user_frame, text="Username", font=("Helvetica", 16), bg='lightblue')
+        username_label.pack(pady=10)
+        self.delete_user_username_entry = tk.Entry(self.delete_user_frame, font=("Helvetica", 16))
+        self.delete_user_username_entry.pack(pady=10)
+
+        delete_button = tk.Button(self.delete_user_frame, text="Delete", command=self.delete_user, bg='red', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        delete_button.pack(pady=20)
+
+        back_button = tk.Button(self.delete_user_frame, text="Back", command=self.manage_users, bg='orange',
+                                font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button.pack(pady=20)
+
+        self.last_frame = self.delete_user_frame
+
+    def delete_user(self):
+        username = self.delete_user_username_entry.get()
+
+        try:
+            self.db_manager.connect()
+            query = "DELETE FROM users WHERE username = %s"
+            self.db_manager.cursor.execute(query, (username,))
+            self.db_manager.conn.commit()
+            self.db_manager.disconnect()
+
+            messagebox.showinfo("Success", "User deleted successfully.")
+            self.delete_user_page()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to delete user: {e}")
+
+    def update_user_access_page(self):
+        self.destroy_last_frame()
+
+        self.update_user_access_frame = tk.Frame(self.root, bg='lightblue')
+        self.update_user_access_frame.pack(expand=True, fill='both')
+
+        title_label = tk.Label(self.update_user_access_frame, text="Update User Access", font=("Helvetica", 24, "bold"), bg='lightblue')
+        title_label.pack(pady=(50, 20))
+
+        username_label = tk.Label(self.update_user_access_frame, text="Username", font=("Helvetica", 16), bg='lightblue')
+        username_label.pack(pady=10)
+        self.update_user_username_entry = tk.Entry(self.update_user_access_frame, font=("Helvetica", 16))
+        self.update_user_username_entry.pack(pady=10)
+
+        role_label = tk.Label(self.update_user_access_frame, text="New Role", font=("Helvetica", 16), bg='lightblue')
+        role_label.pack(pady=10)
+        self.update_user_role_combobox = ttk.Combobox(self.update_user_access_frame, values=["admin", "user", "checker"], font=("Helvetica", 16))
+        self.update_user_role_combobox.pack(pady=10)
+
+        update_button = tk.Button(self.update_user_access_frame, text="Update", command=self.update_user_access, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        update_button.pack(pady=20)
+
+        back_button = tk.Button(self.update_user_access_frame, text="Back", command=self.manage_users, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button.pack(pady=20)
+
+        self.last_frame = self.update_user_access_frame
+
+    def update_user_access(self):
+        username = self.update_user_username_entry.get()
+        new_role = self.update_user_role_combobox.get()
+
+        try:
+            self.db_manager.connect()
+            query = "UPDATE users SET role = %s WHERE username = %s"
+            self.db_manager.cursor.execute(query, (new_role, username))
+            self.db_manager.conn.commit()
+            self.db_manager.disconnect()
+
+            messagebox.showinfo("Success", "User access updated successfully.")
+            self.update_user_access_page()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to update user access: {e}")
 
     def delete_menu_page(self):
         self.destroy_last_frame()
@@ -352,7 +593,7 @@ class App:
 
                 # Create delete button for each menu item
                 delete_button = tk.Button(item_frame, text="Delete", command=lambda nm=nama_minuman: self.delete_selected_menu(nm), bg='red',
-                                    font=("Helvetica", 12, "bold"), padx=10, pady=5)
+                                          font=("Helvetica", 12, "bold"), padx=10, pady=5)
                 delete_button.pack(pady=10)
 
         back_button = tk.Button(delete_menu_frame, text="Back", command=self.create_admin_page, bg='orange',
@@ -550,18 +791,15 @@ class App:
         self.image_label.pack(pady=10)
 
         # Tombol untuk mengunggah gambar
-        upload_button = tk.Button(add_menu_frame, text="Upload Image", command=self.upload_image, bg='blue',
-                                font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        upload_button = tk.Button(add_menu_frame, text="Upload Image", command=self.upload_image, bg='blue', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         upload_button.pack(pady=10)
 
         # Tombol untuk menambahkan menu baru
-        add_button = tk.Button(add_menu_frame, text="Add", command=self.add_new_menu, bg='green',
-                            font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        add_button = tk.Button(add_menu_frame, text="Add", command=self.add_new_menu, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         add_button.pack(pady=10)
 
         # Tombol untuk kembali ke halaman view menu
-        back_button = tk.Button(add_menu_frame, text="Back", command=self.create_admin_page, bg='orange',
-                                font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button = tk.Button(add_menu_frame, text="Back", command=self.create_admin_page, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         back_button.pack(pady=20)
 
         self.last_frame = add_menu_frame
@@ -618,162 +856,416 @@ class App:
         else:
             messagebox.showerror("Error", "Please enter both menu name, price, and description.")
 
+    # -----------------------------------------------------------Laporan Penjualan---------------------------------------------------------------------
+
     def view_sales_data(self):
-        # Destroy the last frame
         self.destroy_last_frame()
+
+        self.sales_data_frame = tk.Frame(self.root, bg='lightblue')
+        self.sales_data_frame.pack(expand=True, fill='both')
+
+        title_label = tk.Label(self.sales_data_frame, text="Sales Data", font=("Helvetica", 24, "bold"), bg='lightblue')
+        title_label.pack(pady=(50, 20))
+
+        button_frame = tk.Frame(self.sales_data_frame, bg='lightblue')
+        button_frame.pack(pady=20)
+
+        filter_button = tk.Button(button_frame, text="Filter", command=self.show_filter_frame, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        filter_button.grid(row=0, column=1, padx=10)
+
+        export_button = tk.Button(button_frame, text="Export Data", command=self.export_data, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        export_button.grid(row=0, column=2, padx=10)
+
+        statistics_button = tk.Button(button_frame, text="View Statistics", command=self.view_statistics, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        statistics_button.grid(row=0, column=3, padx=10)
+
+        view_sales_report_button = tk.Button(button_frame, text="View Sales Report", command=self.view_daily_sales_report, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        view_sales_report_button.grid(row=0, column=4, padx=10)
+
+        sales_chart_button = tk.Button(button_frame, text="Generate Sales Chart", command=self.generate_sales_chart, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        sales_chart_button.grid(row=0, column=5, padx=10)
+
+        columns = ("id", "order_date", "user_id", "nama_minuman", "pilihan_rasa", "persentase", "jumlah", "harga_satuan", "total_harga", "status_pembayaran", "status_pesanan")
+        self.sales_table = ttk.Treeview(self.sales_data_frame, columns=columns, show="headings")
+
+        for col in columns:
+            self.sales_table.heading(col, text=col)
+            self.sales_table.column(col, anchor='center', stretch=True, width=100)
+
+        vsb = ttk.Scrollbar(self.sales_data_frame, orient="vertical", command=self.sales_table.yview)
+        vsb.pack(side='right', fill='y')
+        self.sales_table.configure(yscrollcommand=vsb.set)
+
+        hsb = ttk.Scrollbar(self.sales_data_frame, orient="horizontal", command=self.sales_table.xview)
+        hsb.pack(side='bottom', fill='x')
+        self.sales_table.configure(xscrollcommand=hsb.set)
+
+        self.sales_table.pack(expand=True, fill='both')
+
+        # Fetch sales data (example function, replace with your implementation)
+        self.fetch_sales_data()
+
+        back_button = tk.Button(self.sales_data_frame, text="Back", command=self.create_admin_page, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button.pack(pady=20, side='bottom')
+
+        self.last_frame = self.sales_data_frame
+
+    def view_daily_sales_report(self):
+        self.view_sales_report("daily")
+
+    def view_sales_report(self, report_type):
+        self.destroy_last_frame()
+
+        self.sales_report_frame = tk.Frame(self.root, bg='lightblue')
+        self.sales_report_frame.pack(expand=True, fill='both')
+
+        title_label = tk.Label(self.sales_report_frame, text=f"{report_type.capitalize()} Sales Report", font=("Helvetica", 24, "bold"), bg='lightblue')
+        title_label.pack(pady=(50, 20))
+
+        # Add options for Monthly and Yearly reports above the table
+        report_options_frame = tk.Frame(self.sales_report_frame, bg='lightblue')
+        report_options_frame.pack(pady=(20, 10))
+
+        daily_button = tk.Button(report_options_frame, text="Daily", command=self.view_daily_sales_report, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        daily_button.pack(side='left', padx=10)
+
+        monthly_button = tk.Button(report_options_frame, text="Monthly", command=self.view_monthly_sales_report, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        monthly_button.pack(side='left', padx=10)
+
+        yearly_button = tk.Button(report_options_frame, text="Yearly", command=self.view_yearly_sales_report, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        yearly_button.pack(side='left', padx=10)
+
+        columns = ("Date", "Total Sales", "Total Revenue")
+        tree = ttk.Treeview(self.sales_report_frame, columns=columns, show="headings")
+        tree.heading("Date", text="Date")
+        tree.heading("Total Sales", text="Total Sales")
+        tree.heading("Total Revenue", text="Total Revenue")
+        tree.pack(expand=True, fill='both')
 
         try:
-            # Connect to the database
             self.db_manager.connect()
+            if report_type == "daily":
+                query = "SELECT DATE(order_date) AS date, COUNT(*) AS total_sales, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan GROUP BY DATE(order_date)"
+            elif report_type == "monthly":
+                query = "SELECT DATE_FORMAT(order_date, '%Y-%m') AS month, COUNT(*) AS total_sales, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan GROUP BY DATE_FORMAT(order_date, '%Y-%m')"
+            elif report_type == "yearly":
+                query = "SELECT YEAR(order_date) AS year, COUNT(*) AS total_sales, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan GROUP BY YEAR(order_date)"
 
-            # Retrieve sales data from the database
-            query = "SELECT id, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan FROM ringkasan_pesanan"
             self.db_manager.cursor.execute(query)
             sales_data = self.db_manager.cursor.fetchall()
-
-            # Create a new frame to display sales data
-            sales_frame = tk.Frame(self.root, bg='lightblue')
-            sales_frame.pack(expand=True, fill='both')
-
-            title_label = tk.Label(sales_frame, text="Sales Data", font=("Helvetica", 24, "bold"), bg='lightblue')
-            title_label.pack(pady=(10, 10))
-
-            # Filter entry
-            filter_frame = tk.Frame(sales_frame, bg='lightblue')
-            filter_frame.pack(pady=5)
-
-            filter_label = tk.Label(filter_frame, text="Filter:", font=("Helvetica", 12), bg='lightblue')
-            filter_label.grid(row=0, column=0)
-
-            filter_entry = tk.Entry(filter_frame)
-            filter_entry.grid(row=0, column=1)
-
-            def filter_table():
-                keyword = filter_entry.get().lower()
-                filtered_sales_data = [row for row in sales_data if keyword in str(row).lower()]
-                update_table(filtered_sales_data)
-
-            filter_button = tk.Button(filter_frame, text="Apply", command=filter_table, bg='green', font=("Helvetica", 10, "bold"))
-            filter_button.grid(row=0, column=2, padx=5)
-
-            def update_table(data):
-                # Clear previous data
-                tree.delete(*tree.get_children())
-
-                # Insert filtered data
-                for i, row in enumerate(data, start=1):
-                    tree.insert("", "end", text=str(i), values=row)
-
-            # Display sales data in a table format
-            tree_frame = tk.Frame(sales_frame)
-            tree_frame.pack(expand=True, fill='both')
-            tree_frame.pack_propagate(False)
-
-            tree = ttk.Treeview(tree_frame, columns=("ID", "Item", "Flavor", "Percentage", "Quantity", "Unit Price", "Total Price", "Payment Status", "Order Status"), show="headings")
-            tree.heading("ID", text="ID")
-            tree.heading("Item", text="Item", anchor="center")
-            tree.heading("Flavor", text="Flavor", anchor="center")
-            tree.heading("Percentage", text="Percentage", anchor="center")
-            tree.heading("Quantity", text="Quantity", anchor="center")
-            tree.heading("Unit Price", text="Unit Price", anchor="center")
-            tree.heading("Total Price", text="Total Price", anchor="center")
-            tree.heading("Payment Status", text="Payment Status", anchor="center")
-            tree.heading("Order Status", text="Order Status", anchor="center")
-
-            # Set column widths
-            tree.column("ID", width=50)
-            tree.column("Item", width=150, anchor="center")
-            tree.column("Flavor", width=100, anchor="center")
-            tree.column("Percentage", width=100, anchor="center")
-            tree.column("Quantity", width=100, anchor="center")
-            tree.column("Unit Price", width=100, anchor="center")
-            tree.column("Total Price", width=100, anchor="center")
-            tree.column("Payment Status", width=120, anchor="center")
-            tree.column("Order Status", width=120, anchor="center")
-
-            # Adding a vertical scrollbar to the treeview
-            scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
-            tree.configure(yscroll=scrollbar.set)
-            scrollbar.pack(side='right', fill='y')
-
-            tree.pack(pady=10, padx=10, expand=True, fill='both')
-
-            for i, row in enumerate(sales_data, start=1):
-                tree.insert("", "end", text=str(i), values=row)
-
-            def show_chart():
-                # Create and display the sales chart
-                chart_window = tk.Toplevel(self.root)
-                chart_window.title("Sales Chart")
-
-                # Prepare data for the chart
-                items = [row[1] for row in sales_data]
-                quantities = [int(row[4]) for row in sales_data]
-
-                # Create a bar chart
-                fig, ax = plt.subplots(figsize=(8, 6))
-                ax.bar(items, quantities)
-                ax.set_xlabel("Item")
-                ax.set_ylabel("Quantity")
-                ax.set_title("Sales Chart")
-
-                # Convert the Matplotlib figure to a Tkinter canvas
-                canvas = FigureCanvasTkAgg(fig, master=chart_window)
-                canvas.draw()
-                canvas.get_tk_widget().pack()
-
-            # Frame for buttons
-            button_frame = tk.Frame(sales_frame, bg='lightblue')
-            button_frame.pack(pady=20)
-
-            # Button to show chart
-            chart_button = tk.Button(button_frame, text="Show Chart", command=show_chart, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
-            chart_button.grid(row=0, column=0, padx=10)
-
-            # Back button to return to admin page
-            back_button = tk.Button(button_frame, text="Back", command=self.create_admin_page, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
-            back_button.grid(row=0, column=1, padx=10)
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to retrieve sales data: {str(e)}")
-
-        finally:
-            # Disconnect from the database
             self.db_manager.disconnect()
 
-        # Set the last frame
-        self.last_frame = sales_frame
+            for row in sales_data:
+                tree.insert("", "end", values=row)
 
-# -----------------------------------------------------------USER---------------------------------------------------------------------
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to retrieve sales report: {e}")
 
-    def create_user_welcome_page(self):
+        back_button = tk.Button(self.sales_report_frame, text="Back", command=self.view_sales_data, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button.pack(pady=20)
+
+        self.last_frame = self.sales_report_frame
+
+    def view_monthly_sales_report(self):
+        self.view_sales_report("monthly")
+
+    def view_yearly_sales_report(self):
+        self.view_sales_report("yearly")
+    # -----------------------------------------------------------Grafik dan Visualisasi---------------------------------------------------------------------
+
+    def generate_sales_chart(self):
         self.destroy_last_frame()
 
-        for nama_minuman in self.order:
-            self.order[nama_minuman]['quantity'] = 0
+        self.sales_chart_frame = tk.Frame(self.root, bg='lightblue')
+        self.sales_chart_frame.pack(expand=True, fill='both')
 
-        if self.user_logged_in:
-            self.user_welcome_frame = tk.Frame(self.root, bg='lightblue')
-            self.user_welcome_frame.pack(expand=True, fill='both')
+        title_label = tk.Label(self.sales_chart_frame, text="Sales Chart", font=("Helvetica", 24, "bold"), bg='lightblue')
+        title_label.pack(pady=(50, 20))
 
-            welcome_label = tk.Label(self.user_welcome_frame, text="WELCOME", font=("Helvetica", 30, "bold"), bg='lightblue')
-            welcome_label.pack(pady=(300, 20))
+        chart_type_label = tk.Label(self.sales_chart_frame, text="Select Chart Type", font=("Helvetica", 16), bg='lightblue')
+        chart_type_label.pack(pady=10)
 
-            order_button = tk.Button(self.user_welcome_frame, text="ORDER NOW", command=self.show_order_page, bg='orange', font=("Helvetica", 20, "bold"), padx=10, pady=5)
-            order_button.pack(pady=20)
-        else:
-            self.create_login_page()
+        chart_type_var = tk.StringVar(value="daily")
 
-        self.last_frame = self.user_welcome_frame
+        daily_radio = tk.Radiobutton(self.sales_chart_frame, text="Daily", variable=chart_type_var, value="daily", bg='lightblue', font=("Helvetica", 14))
+        daily_radio.pack(pady=5)
+        monthly_radio = tk.Radiobutton(self.sales_chart_frame, text="Monthly", variable=chart_type_var, value="monthly", bg='lightblue', font=("Helvetica", 14))
+        monthly_radio.pack(pady=5)
+        yearly_radio = tk.Radiobutton(self.sales_chart_frame, text="Yearly", variable=chart_type_var, value="yearly", bg='lightblue', font=("Helvetica", 14))
+        yearly_radio.pack(pady=5)
 
-    def show_order_page(self):
+        generate_button = tk.Button(self.sales_chart_frame, text="Generate Chart", command=lambda: self.plot_sales_chart(chart_type_var.get()), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        generate_button.pack(pady=20)
+
+        back_button = tk.Button(self.sales_chart_frame, text="Back", command=self.view_sales_data, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button.pack(pady=20)
+
+        self.last_frame = self.sales_chart_frame
+
+    def plot_sales_chart(self, chart_type):
         self.destroy_last_frame()
+
+        self.sales_chart_plot_frame = tk.Frame(self.root, bg='lightblue')
+        self.sales_chart_plot_frame.pack(expand=True, fill='both')
+
+        title_label = tk.Label(self.sales_chart_plot_frame, text=f"{chart_type.capitalize()} Sales Chart", font=("Helvetica", 24, "bold"), bg='lightblue')
+        title_label.pack(pady=(50, 20))
+
+        try:
+            self.db_manager.connect()
+            if chart_type == "daily":
+                query = "SELECT DATE(order_date) AS date, COUNT(*) AS total_sales, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan GROUP BY DATE(order_date)"
+            elif chart_type == "monthly":
+                query = "SELECT DATE_FORMAT(order_date, '%Y-%m') AS month, COUNT(*) AS total_sales, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan GROUP BY DATE_FORMAT(order_date, '%Y-%m')"
+            elif chart_type == "yearly":
+                query = "SELECT YEAR(order_date) AS year, COUNT(*) AS total_sales, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan GROUP BY YEAR(order_date)"
+
+            self.db_manager.cursor.execute(query)
+            sales_data = self.db_manager.cursor.fetchall()
+            self.db_manager.disconnect()
+
+            dates = [row[0] for row in sales_data]
+            total_sales = [row[1] for row in sales_data]
+            total_revenue = [row[2] for row in sales_data]
+
+            fig, ax1 = plt.subplots()
+
+            color = 'tab:blue'
+            ax1.set_xlabel(chart_type.capitalize())
+            ax1.set_ylabel('Total Sales', color=color)
+            ax1.plot(dates, total_sales, color=color)
+            ax1.tick_params(axis='y', labelcolor=color)
+
+            ax2 = ax1.twinx()
+            color = 'tab:red'
+            ax2.set_ylabel('Total Revenue (Rp)', color=color)
+            ax2.plot(dates, total_revenue, color=color)
+            ax2.tick_params(axis='y', labelcolor=color)
+
+            fig.tight_layout()
+
+            canvas = FigureCanvasTkAgg(fig, master=self.sales_chart_plot_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(pady=20)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate sales chart: {e}")
+
+        back_button = tk.Button(self.sales_chart_plot_frame, text="Back", command=self.generate_sales_chart, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button.pack(pady=20)
+
+        self.last_frame = self.sales_chart_plot_frame
+
+    # -----------------------------------------------------------Filter dan Pencarian---------------------------------------------------------------------
+
+    def show_filter_frame(self):
+        self.filter_frame = tk.Toplevel(self.root)
+        self.filter_frame.title("Apply Filter")
+
+        tk.Label(self.filter_frame, text="Order Date:").grid(row=0, column=0, padx=10, pady=10)
+        self.order_date_entry = DateEntry(self.filter_frame, width=12, background='darkblue', foreground='white', borderwidth=2)
+        self.order_date_entry.grid(row=0, column=1, padx=10, pady=10)
+
+        tk.Label(self.filter_frame, text="Nama Minuman:").grid(row=1, column=0, padx=10, pady=10)
+        self.nama_minuman_var = tk.StringVar()
+        self.nama_minuman_dropdown = ttk.Combobox(self.filter_frame, textvariable=self.nama_minuman_var)
+        self.nama_minuman_dropdown.grid(row=1, column=1, padx=10, pady=10)
+
+        tk.Label(self.filter_frame, text="Pilihan Rasa:").grid(row=2, column=0, padx=10, pady=10)
+        self.pilihan_rasa_var = tk.StringVar()
+        self.pilihan_rasa_dropdown = ttk.Combobox(self.filter_frame, textvariable=self.pilihan_rasa_var, font=("Helvetica", 12))
+        self.pilihan_rasa_dropdown.grid(row=2, column=1, padx=10, pady=10)
+
+        tk.Label(self.filter_frame, text="Persentase:").grid(row=3, column=0, padx=10, pady=10)
+        self.persentase_var = tk.StringVar()
+        self.persentase_dropdown = ttk.Combobox(self.filter_frame, textvariable=self.persentase_var)
+        self.persentase_dropdown.grid(row=3, column=1, padx=10, pady=10)
+
+        apply_button = tk.Button(self.filter_frame, text="Apply", command=self.apply_filter, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        apply_button.grid(row=4, column=1, pady=10)
+
+        self.fetch_filter_options()
+
+    def fetch_filter_options(self):
+        try:
+            self.db_manager.connect()
+            query = "SELECT nama_minuman FROM menu"
+            self.db_manager.cursor.execute(query)
+            menu_data = self.db_manager.cursor.fetchall()
+
+            query = "SELECT DISTINCT pilihan_rasa FROM ringkasan_pesanan"
+            self.db_manager.cursor.execute(query)
+            pilihan_rasa_data = self.db_manager.cursor.fetchall()
+
+            query = "SELECT DISTINCT persentase FROM ringkasan_pesanan"
+            self.db_manager.cursor.execute(query)
+            persentase_data = self.db_manager.cursor.fetchall()
+            self.db_manager.disconnect()
+
+            nama_minuman_options = [item[0] for item in menu_data]
+            self.nama_minuman_dropdown['values'] = nama_minuman_options
+
+            pilihan_rasa_options = [item[0] for item in pilihan_rasa_data]
+            self.pilihan_rasa_dropdown['values'] = pilihan_rasa_options
+
+            persentase_options = [item[0] for item in persentase_data]
+            self.persentase_dropdown['values'] = persentase_options
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to fetch filter options: {e}")
+
+    def apply_filter(self):
+        try:
+            order_date_filter = self.order_date_entry.get_date()
+            nama_minuman_filter = self.nama_minuman_var.get()
+            pilihan_rasa_filter = self.pilihan_rasa_var.get()
+            persentase_filter = self.persentase_var.get()
+
+            query = "SELECT * FROM ringkasan_pesanan WHERE 1=1"
+            params = []
+
+            if order_date_filter:
+                query += " AND DATE(order_date) = %s"
+                params.append(order_date_filter)
+
+            if nama_minuman_filter:
+                query += " AND nama_minuman = %s"
+                params.append(nama_minuman_filter)
+
+            if pilihan_rasa_filter:
+                query += " AND pilihan_rasa = %s"
+                params.append(pilihan_rasa_filter)
+
+            if persentase_filter:
+                query += " AND persentase = %s"
+                params.append(persentase_filter)
+
+            self.db_manager.connect()
+            self.db_manager.cursor.execute(query, tuple(params))
+            filtered_sales_data = self.db_manager.cursor.fetchall()
+            self.db_manager.disconnect()
+
+            self.update_table(filtered_sales_data)
+
+            self.filter_frame.destroy()
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to apply filter: {e}")
+
+    def update_table(self, filtered_sales_data):
+        for item in self.sales_table.get_children():
+            self.sales_table.delete(item)
+
+        for row in filtered_sales_data:
+            self.sales_table.insert('', 'end', values=row)
+
+    def fetch_sales_data(self):
+        try:
+            self.db_manager.connect()
+            query = "SELECT * FROM ringkasan_pesanan"
+            self.db_manager.cursor.execute(query)
+            self.sales_data = self.db_manager.cursor.fetchall()
+            self.db_manager.disconnect()
+
+            self.update_table(self.sales_data)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to retrieve sales data: {e}")
+
+    # -----------------------------------------------------------Ekspor Data---------------------------------------------------------------------
+
+    def export_data(self):
+        try:
+            # Ambil semua data dari tabel penjualan
+            self.db_manager.connect()
+            query = "SELECT * FROM ringkasan_pesanan"
+            self.db_manager.cursor.execute(query)
+            sales_data = self.db_manager.cursor.fetchall()
+            self.db_manager.disconnect()
+
+            # Konversi data ke DataFrame pandas
+            columns = ["id", "order_date", "user_id", "nama_minuman", "pilihan_rasa", "persentase", "jumlah", "harga_satuan", "total_harga", "status_pembayaran", "status_pesanan"]
+            df = pd.DataFrame(sales_data, columns=columns)
+
+            # Pilih lokasi dan nama file untuk menyimpan data
+            file_path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")])
+
+            if file_path:
+                # Simpan DataFrame ke file CSV
+                df.to_csv(file_path, index=False)
+                messagebox.showinfo("Success", "Data successfully exported to CSV file")
+            else:
+                messagebox.showwarning("Cancelled", "Export cancelled")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to export data: {e}")
+
+    # -----------------------------------------------------------Ringkasan Statistik---------------------------------------------------------------------
+
+    def view_statistics(self):
+        self.destroy_last_frame()
+
+        self.statistics_frame = tk.Frame(self.root, bg='lightblue')
+        self.statistics_frame.pack(expand=True, fill='both')
+
+        title_label = tk.Label(self.statistics_frame, text="Sales Statistics", font=("Helvetica", 24, "bold"), bg='lightblue')
+        title_label.pack(pady=(50, 20))
+
+        try:
+            self.db_manager.connect()
+            query = "SELECT COUNT(*) AS total_orders, SUM(jumlah) AS total_items_sold, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan"
+            self.db_manager.cursor.execute(query)
+            statistics = self.db_manager.cursor.fetchone()
+            self.db_manager.disconnect()
+
+            total_orders_label = tk.Label(self.statistics_frame, text=f"Total Orders: {statistics[0]}", font=("Helvetica", 16), bg='lightblue')
+            total_orders_label.pack(pady=5)
+
+            total_items_sold_label = tk.Label(self.statistics_frame, text=f"Total Items Sold: {statistics[1]}", font=("Helvetica", 16), bg='lightblue')
+            total_items_sold_label.pack(pady=5)
+
+            total_revenue_label = tk.Label(self.statistics_frame, text=f"Total Revenue: {self.format_price(statistics[2])}", font=("Helvetica", 16), bg='lightblue')
+            total_revenue_label.pack(pady=5)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to retrieve statistics: {e}")
+
+        back_button = tk.Button(self.statistics_frame, text="Back", command=self.create_admin_page, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button.pack(pady=20)
+
+        self.last_frame = self.statistics_frame
+
+    # -----------------------------------------------------------USER---------------------------------------------------------------------
+    def create_order_for_user(self):
+        # Generate a new user ID
+        user_id = str(uuid.uuid4())
+        self.show_order_page(user_id)
+
+    def show_order_page(self, user_id):
+        if user_id is None:
+            raise ValueError("User ID must not be None")
+
+        print("User ID:", user_id)
+
+        self.destroy_last_frame()
+
+        self.current_user_id = user_id  # Set the current user ID
+
+        # Reset item quantities only if the user is different
+        if getattr(self, 'previous_user_id', None) != user_id:
+            self.reset_all_item_quantities()
+
+        self.previous_user_id = user_id
 
         self.order_frame_container = tk.Frame(self.root, bg='lightblue')
         self.order_frame_container.pack(expand=True, fill='both')
 
         title_label = tk.Label(self.order_frame_container, text="DRINKS MENU", font=("Helvetica", 24, "bold"), bg='lightblue')
         title_label.pack(pady=40)
+
+        # Tampilkan ID pengguna
+        user_id_label = tk.Label(self.order_frame_container, text=f"User ID: {user_id}", font=("Helvetica", 12), bg='lightblue')
+        user_id_label.place(x=20, y=20)
 
         content_frame = tk.Frame(self.order_frame_container, bg='lightblue')
         content_frame.pack(expand=True, fill='both')
@@ -798,18 +1290,19 @@ class App:
                 item_frame.grid(row=row_number, column=col_number, padx=5, pady=5, sticky="nsew")
 
                 def on_image_click(nama_minuman=nama_minuman, harga=harga, deskripsi=deskripsi):
-                    self.show_description_popup(nama_minuman, harga, deskripsi)
-
-                canvas = tk.Canvas(item_frame, width=250, height=250, bg='lightblue', highlightthickness=0)
-                canvas.pack()
-                canvas.bind("<Button-1>", lambda event, nama_minuman=nama_minuman, harga=harga, deskripsi=deskripsi: on_image_click())
+                    self.show_description_popup_page(nama_minuman, harga, deskripsi)
 
                 try:
                     image = Image.open(io.BytesIO(gambar_minuman))
                     image = image.resize((200, 200))
                     photo = ImageTk.PhotoImage(image)
+
+                    canvas = tk.Canvas(item_frame, width=250, height=250, bg='lightblue', highlightthickness=0)
                     canvas.create_image(125, 125, image=photo)
-                    canvas.image = photo
+                    canvas.image = photo  # Simpan referensi agar gambar tidak terhapus
+                    canvas.bind("<Button-1>", lambda event, nama_minuman=nama_minuman, harga=harga, deskripsi=deskripsi: on_image_click(nama_minuman, harga, deskripsi))
+                    canvas.pack()
+
                 except Exception as e:
                     error_label = tk.Label(item_frame, text=f"Error: {e}", font=("Helvetica", 16), bg='lightblue')
                     error_label.pack(pady=10)
@@ -822,14 +1315,14 @@ class App:
                 button_frame = tk.Frame(item_frame, bg='lightblue')
                 button_frame.pack()
 
-                if nama_minuman == "Sirup Dua Rasa":
-                    plus_button = tk.Button(button_frame, text="+", font=("Helvetica", 14), command=self.show_rasa_selection)
-                else:
-                    plus_button = tk.Button(button_frame, text="+", font=("Helvetica", 14), command=self.create_increment_function(nama_minuman))
-
+                plus_button = tk.Button(button_frame, text="+", font=("Helvetica", 14), command=self.create_increment_function(nama_minuman))
                 plus_button.pack(side="right", padx=5, pady=5)
 
-                quantity_label = tk.Label(button_frame, text=self.order.get(nama_minuman, {}).get('quantity', 0), font=("Helvetica", 20), bg='lightblue')
+                quantity = 0
+                if nama_minuman in self.order:
+                    quantity = sum(details['quantity'] for details in self.order[nama_minuman])
+
+                quantity_label = tk.Label(button_frame, text=quantity, font=("Helvetica", 20), bg='lightblue')
                 quantity_label.pack(side="right", padx=10, pady=5)
                 self.counts[nama_minuman] = quantity_label
 
@@ -839,9 +1332,6 @@ class App:
                 self.menu_items[nama_minuman] = {'harga': harga, 'gambar': gambar_minuman}
 
         self.last_frame = self.order_frame_container
-
-        for item, count in self.order.items():
-            self.counts[item].config(text=str(count['quantity']))
 
         if hasattr(self, 'cart_frame') and self.cart_frame is not None and self.cart_frame.winfo_exists():
             self.cart_frame.destroy()
@@ -881,17 +1371,17 @@ class App:
 
     def update_total_price(self):
         total_price = 0
-        for item_key, details in self.order.items():
-            quantity = details['quantity']
-            if quantity == 0:
-                continue
-            harga_satuan = self.menu_items[item_key]['harga']
-            total_harga = quantity * harga_satuan
-            total_price += total_harga
+        for item_key, details_list in self.order.items():
+            if item_key in self.menu_items:
+                harga_satuan = self.menu_items[item_key]['harga']
+                for details in details_list:
+                    quantity = details['quantity']
+                    total_price += quantity * harga_satuan
+            else:
+                messagebox.showerror("Error", f"Menu item '{item_key}' not found.")
 
         formatted_price = self.format_price(total_price)
-        if hasattr(self, 'total_price_label'):
-            self.total_price_label.config(text=f"Total Price: {formatted_price}")
+        self.total_price_label.config(text=f"Total Price: {formatted_price}")
 
     def create_increment_function(self, nama_minuman):
         def increment():
@@ -901,18 +1391,25 @@ class App:
             else:
                 current_count = 0
                 self.counts[nama_minuman] = tk.Label(self.root, text=str(current_count + 1))
-                self.counts[nama_minuman].pack()  # Make sure to pack or grid the label
+                self.counts[nama_minuman].pack()
 
-            if nama_minuman not in self.order:
-                self.order[nama_minuman] = {'quantity': 1, 'rasa': [], 'persentase': []}
-            else:
-                self.order[nama_minuman]['quantity'] += 1
-
-            self.update_total_price()
-
+            # Update order
             if nama_minuman == "Sirup Dua Rasa":
-                self.show_rasa_selection()
-
+                self.show_rasa_selection(self.current_user_id)
+            else:
+                if nama_minuman not in self.order:
+                    self.order[nama_minuman] = [{'quantity': 1, 'variants': []}]
+                else:
+                    # Find the existing item or create a new one
+                    found = False
+                    for details in self.order[nama_minuman]:
+                        if details['variants'] == []:
+                            details['quantity'] += 1
+                            found = True
+                            break
+                    if not found:
+                        self.order[nama_minuman].append({'quantity': 1, 'variants': []})
+            self.update_total_price()  # Update total price here
         return increment
 
     def create_decrement_function(self, nama_minuman):
@@ -921,43 +1418,53 @@ class App:
                 current_count = int(self.counts[nama_minuman].cget("text"))
                 if current_count > 0:
                     self.counts[nama_minuman].config(text=str(current_count - 1))
-                    if nama_minuman in self.order and self.order[nama_minuman]['quantity'] > 0:
-                        self.order[nama_minuman]['quantity'] -= 1
-                        if self.order[nama_minuman]['quantity'] == 0:
+                    if nama_minuman in self.order:
+                        details_list = self.order[nama_minuman]
+                        for details in details_list:
+                            if details['quantity'] > 0:
+                                details['quantity'] -= 1
+                                if details['quantity'] == 0:
+                                    details_list.remove(details)
+                                break
+                        if not details_list:
                             del self.order[nama_minuman]
-                    self.update_total_price()
+                        self.update_total_price()
         return decrement
 
     # End of method show_order_page
 
-    def show_description_popup(self, nama_minuman, harga, deskripsi):
-        description_window = tk.Toplevel(self.root)
-        description_window.title(nama_minuman)
-        description_window.geometry("300x200")
-        description_window.configure(bg='lightblue')
+    def show_description_popup_page(self, nama_minuman, harga, deskripsi):
+        # Close any existing description window before opening a new one
+        if hasattr(self, 'active_description_window') and self.active_description_window.winfo_exists():
+            self.active_description_window.destroy()
 
-        name_label = tk.Label(description_window, text=nama_minuman, font=("Helvetica", 16, "bold"), bg='lightblue')
-        name_label.pack(pady=10)
+        # Create new popup window
+        self.active_description_window = tk.Toplevel(self.root)
+        self.active_description_window.title(nama_minuman)
+        self.active_description_window.geometry("300x200")
+        self.active_description_window.configure(bg='lightblue')
 
-        price_label = tk.Label(description_window, text=f"Harga: {harga}", font=("Helvetica", 14), bg='lightblue')
-        price_label.pack(pady=10)
-
-        description_label = tk.Label(description_window, text=deskripsi, font=("Helvetica", 12), bg='lightblue', wraplength=250)
+        description_label = tk.Label(self.active_description_window, text=f"{nama_minuman}\nHarga: {harga}\nDeskripsi: {deskripsi}", font=("Helvetica", 14), bg='lightblue')
         description_label.pack(pady=10)
+
+        # Add a close button to close the popup window
+        close_button = tk.Button(self.active_description_window, text="Close", command=self.active_description_window.destroy, font=("Helvetica", 12, "bold"), bg='#FF5733', fg='white')
+        close_button.pack(pady=10)
 
     def hide_cart_and_total_price(self):
         if self.cart_frame is not None and self.cart_frame.winfo_exists():
             self.cart_frame.destroy()
 
     def show_cart(self):
+        # Jika jendela cart sudah ada, kita akan menghapus konten lama dan mengisinya dengan konten baru
         if hasattr(self, 'cart_window') and self.cart_window.winfo_exists():
-            self.cart_window.lift()
-            return
-
-        self.cart_window = tk.Toplevel(self.root)
-        self.cart_window.title("Cart")
-        self.cart_window.geometry("800x600")
-        self.cart_window.configure(bg='lightblue')
+            for widget in self.cart_window.winfo_children():
+                widget.destroy()
+        else:
+            self.cart_window = tk.Toplevel(self.root)
+            self.cart_window.title("Cart")
+            self.cart_window.geometry("800x600")
+            self.cart_window.configure(bg='lightblue')
 
         cart_frame = tk.Frame(self.cart_window, bg='lightblue')
         cart_frame.pack(expand=True, fill='both', padx=20, pady=20)
@@ -981,75 +1488,70 @@ class App:
         canvas.configure(yscrollcommand=scrollbar.set)
 
         total_price = 0
-        self.item_frames = {}
-        self.cart_quantities = {}
-        self.total_harga_labels = {}
-        self.gambar_minuman_labels = {}
 
-        for nama_minuman, details in self.order.items():
-            quantity = details['quantity']
-            if quantity == 0:
-                continue
-            harga_satuan = self.menu_items[nama_minuman]['harga']
-            total_harga = quantity * harga_satuan
-            gambar_minuman = self.menu_items[nama_minuman].get('gambar')
-            rasa = ', '.join(details.get('rasa', [])) if 'sirup dua rasa' in nama_minuman.lower() else ''
+        for nama_minuman, details_list in self.order.items():
+            for details in details_list:
+                quantity = details['quantity']
+                if quantity == 0:
+                    continue
 
-            total_price += total_harga
+                harga_satuan = self.menu_items[nama_minuman]['harga']
+                total_harga = quantity * harga_satuan
+                gambar_minuman = self.menu_items[nama_minuman].get('gambar')
+                variants = details.get('variants', [])
 
-            item_frame = tk.Frame(scrollable_frame, bg='white', bd=2, relief='groove')
-            item_frame.pack(fill='x', expand=True, padx=10, pady=10)
-            self.item_frames[nama_minuman] = item_frame
+                total_price += total_harga
 
-            if gambar_minuman:
-                canvas_img = tk.Canvas(item_frame, width=100, height=100, bg='white', highlightthickness=0)
-                canvas_img.pack(side='left', padx=10, pady=10)
-                try:
-                    image = Image.open(io.BytesIO(gambar_minuman))
-                    image = image.resize((100, 100))
-                    photo = ImageTk.PhotoImage(image)
-                    canvas_img.create_image(50, 50, image=photo)
-                    canvas_img.image = photo
-                    self.gambar_minuman_labels[nama_minuman] = canvas_img  # Simpan referensi ke label gambar
-                except Exception as e:
-                    error_label = tk.Label(item_frame, text=f"Error: {e}", font=("Helvetica", 10), bg='white')
-                    error_label.pack(pady=10)
-            else:
-                placeholder_label = tk.Label(item_frame, text="No Image", font=("Helvetica", 10), bg='white')
-                placeholder_label.pack(side='left', padx=10, pady=10)
+                item_frame = tk.Frame(scrollable_frame, bg='white', bd=2, relief='groove')
+                item_frame.pack(fill='x', expand=True, padx=10, pady=10)
 
-            details_frame = tk.Frame(item_frame, bg='white')
-            details_frame.pack(side='left', padx=10, pady=10)
+                # Display image
+                if gambar_minuman:
+                    canvas_img = tk.Canvas(item_frame, width=100, height=100, bg='white', highlightthickness=0)
+                    canvas_img.pack(side='left', padx=10, pady=10)
+                    try:
+                        image = Image.open(io.BytesIO(gambar_minuman))
+                        image = image.resize((100, 100))
+                        photo = ImageTk.PhotoImage(image)
+                        canvas_img.create_image(50, 50, image=photo)
+                        canvas_img.image = photo
+                    except Exception as e:
+                        error_label = tk.Label(item_frame, text=f"Error: {e}", font=("Helvetica", 10), bg='white')
+                        error_label.pack(pady=10)
+                else:
+                    placeholder_label = tk.Label(item_frame, text="No Image", font=("Helvetica", 10), bg='white')
+                    placeholder_label.pack(side='left', padx=10, pady=10)
 
-            nama_label = tk.Label(details_frame, text=nama_minuman, font=("Helvetica", 14, "bold"), bg='white')
-            nama_label.pack(anchor='w')
+                details_frame = tk.Frame(item_frame, bg='white')
+                details_frame.pack(side='left', padx=10, pady=10)
 
-            quantity_frame = tk.Frame(details_frame, bg='white')
-            quantity_frame.pack(anchor='w')
+                nama_label = tk.Label(details_frame, text=nama_minuman, font=("Helvetica", 14, "bold"), bg='white')
+                nama_label.pack(anchor='w')
 
-            minus_button = tk.Button(quantity_frame, text="-", command=lambda n=nama_minuman: self.update_quantity_cart(n, -1), bg='red', font=("Helvetica", 12, "bold"), padx=5, pady=5)
-            minus_button.pack(side='left', padx=(0, 5))
+                quantity_frame = tk.Frame(details_frame, bg='white')
+                quantity_frame.pack(anchor='w')
 
-            quantity_label = tk.Label(quantity_frame, text=str(quantity), font=("Helvetica", 12), bg='white')
-            quantity_label.pack(side='left', padx=(5, 5))
-            self.cart_quantities[nama_minuman] = quantity_label
+                minus_button = tk.Button(quantity_frame, text="-", command=lambda n=nama_minuman, r=variants[0]['rasas'] if variants else [], p=variants[0]['persentase'] if variants else 0: self.update_quantity_cart(n, r, p, -1), bg='red', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+                minus_button.pack(side='left', padx=(0, 5))
 
-            plus_button = tk.Button(quantity_frame, text="+", command=lambda n=nama_minuman: self.update_quantity_cart(n, 1), bg='green', font=("Helvetica", 12, "bold"), padx=5, pady=5)
-            plus_button.pack(side='left', padx=(5, 0))
+                quantity_label = tk.Label(quantity_frame, text=str(quantity), font=("Helvetica", 12), bg='white')
+                quantity_label.pack(side='left', padx=(5, 5))
 
-            harga_label = tk.Label(details_frame, text=f"Harga Satuan: {self.format_price(harga_satuan)}", font=("Helvetica", 12), bg='white')
-            harga_label.pack(anchor='w')
+                plus_button = tk.Button(quantity_frame, text="+", command=lambda n=nama_minuman, r=variants[0]['rasas'] if variants else [], p=variants[0]['persentase'] if variants else 0: self.update_quantity_cart(n, r, p, 1), bg='green', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+                plus_button.pack(side='left', padx=(5, 0))
 
-            total_harga_label = tk.Label(details_frame, text=f"Total Harga: {self.format_price(total_harga)}", font=("Helvetica", 12), bg='white')
-            total_harga_label.pack(anchor='w')
-            self.total_harga_labels[nama_minuman] = total_harga_label
+                harga_label = tk.Label(details_frame, text=f"Harga Satuan: {self.format_price(harga_satuan)}", font=("Helvetica", 12), bg='white')
+                harga_label.pack(anchor='w')
 
-            if 'sirup dua rasa' in nama_minuman.lower():
-                rasa_label = tk.Label(details_frame, text=f"Rasa: {rasa}", font=("Helvetica", 12), bg='white')
-                rasa_label.pack(anchor='w')
+                total_harga_label = tk.Label(details_frame, text=f"Total Harga: {self.format_price(total_harga)}", font=("Helvetica", 12), bg='white')
+                total_harga_label.pack(anchor='w')
 
-        # Update total price after adding all items
-        self.update_total_price()
+                if variants:
+                    rasa_label = tk.Label(details_frame, text=f"Rasa: {', '.join(variants[0]['rasas'])}", font=("Helvetica", 12), bg='white')
+                    rasa_label.pack(anchor='w')
+
+                    persentase_label = tk.Label(details_frame, text=f"Persentase: {variants[0]['persentase']}", font=("Helvetica", 12), bg='white')
+                    persentase_label.pack(anchor='w')
 
         # Total price and confirm button at the bottom
         bottom_frame = tk.Frame(self.cart_window, bg='lightblue')
@@ -1064,30 +1566,37 @@ class App:
 
         self.total_price_label = total_price_label
 
-    def update_quantity_cart(self, nama_minuman, delta):
-        current_quantity = self.order[nama_minuman]['quantity']
-        new_quantity = current_quantity + delta
-        if new_quantity < 0:
-            new_quantity = 0
+        self.root.update_idletasks()
 
-        self.order[nama_minuman]['quantity'] = new_quantity
-        self.cart_quantities[nama_minuman].config(text=str(new_quantity))
-
-        if new_quantity == 0:
-            self.item_frames[nama_minuman].pack_forget()
-
-        # Update individual item total price
-        harga_satuan = self.menu_items[nama_minuman]['harga']
-        total_harga = new_quantity * harga_satuan
-        self.total_harga_labels[nama_minuman].config(text=f"Total Harga: {self.format_price(total_harga)}")
-
-        # Update overall total price
-        self.update_total_price()
+    def update_quantity_cart(self, nama_minuman, rasa, persentase, delta):
+        if nama_minuman in self.order:
+            for details in self.order[nama_minuman]:
+                # Periksa jika minuman memiliki varian atau tidak
+                if 'variants' in details and details['variants']:
+                    for variant in details['variants']:
+                        if set(variant['rasas']) == set(rasa) and variant['persentase'] == persentase:
+                            details['quantity'] += delta
+                            if details['quantity'] <= 0:
+                                self.order[nama_minuman].remove(details)
+                            if not self.order[nama_minuman]:
+                                del self.order[nama_minuman]
+                            self.show_cart()
+                            return
+                else:
+                    # Jika minuman tidak memiliki varian
+                    details['quantity'] += delta
+                    if details['quantity'] <= 0:
+                        self.order[nama_minuman].remove(details)
+                    if not self.order[nama_minuman]:
+                        del self.order[nama_minuman]
+                    self.show_cart()
+                    return
+        self.show_cart()
 
     def confirm_cart(self):
         if hasattr(self, 'cart_window') and self.cart_window.winfo_exists():
             self.cart_window.destroy()
-        self.show_order_page()
+        self.show_order_page(self.current_user_id)
 
     def get_rasa_options(self):
         self.db_manager.connect()
@@ -1099,32 +1608,37 @@ class App:
         return rasa_options
 
     def add_to_cart(self):
-        rasa1 = self.rasa_var1.get()
-        rasa2 = self.rasa_var2.get()
+        item_key = "Sirup Dua Rasa"
+
+        rasa_1 = self.rasa_var1.get()
+        rasa_2 = self.rasa_var2.get()
         persentase = self.persentase_var.get()
         quantity = self.quantity_var.get()
 
-        item_key = "Sirup Dua Rasa"
         if item_key not in self.order:
-            self.order[item_key] = {'quantity': quantity, 'rasa': [f"{rasa1} + {rasa2}"], 'persentase': [persentase]}
+            self.order[item_key] = [{'quantity': quantity, 'variants': [{'rasas': [rasa_1, rasa_2], 'persentase': persentase}]}]
         else:
-            self.order[item_key]['quantity'] += quantity
-            self.order[item_key]['rasa'].extend([f"{rasa1} + {rasa2}"] * quantity)
-            self.order[item_key]['persentase'].extend([persentase] * quantity)
+            combination_exists = False
+            for details in self.order[item_key]:
+                for variant in details['variants']:
+                    if set(variant['rasas']) == set([rasa_1, rasa_2]) and variant['persentase'] == persentase:
+                        details['quantity'] += quantity
+                        combination_exists = True
+                        break
 
-        # Update self.counts to include the new item
+            if not combination_exists:
+                self.order[item_key].append({'quantity': quantity, 'variants': [{'rasas': [rasa_1, rasa_2], 'persentase': persentase}]})
+
+        total_quantity = sum(details['quantity'] for details in self.order[item_key])
         if item_key not in self.counts:
-            self.counts[item_key] = tk.Label(self.root, text=str(quantity))
+            self.counts[item_key] = tk.Label(self.root, text=str(total_quantity))
         else:
-            # Check if the associated label widget exists
-            if item_key in self.counts and isinstance(self.counts[item_key], tk.Label) and self.counts[item_key].winfo_exists():
-                current_count = int(self.counts[item_key].cget("text"))
-                self.counts[item_key].config(text=str(current_count + quantity))
+            if self.counts[item_key].winfo_exists():
+                self.counts[item_key].config(text=str(total_quantity))
             else:
-                # If the widget doesn't exist or is not properly initialized, create a new label widget
-                self.counts[item_key] = tk.Label(self.root, text=str(quantity))
+                self.counts[item_key] = tk.Label(self.root, text=str(total_quantity))
 
-        self.show_order_page()
+        self.show_order_page(self.current_user_id)
 
     def decrement_quantity(self):
         current_quantity = self.quantity_var.get()
@@ -1135,7 +1649,11 @@ class App:
         current_quantity = self.quantity_var.get()
         self.quantity_var.set(current_quantity + 1)
 
-    def show_rasa_selection(self):
+    def show_rasa_selection(self, user_id):
+        if user_id is None:
+            raise ValueError("User ID must not be None")
+
+        print("User ID:", user_id)
         self.destroy_last_frame()
 
         rasa_selection_frame = tk.Frame(self.root, bg='lightblue')
@@ -1143,6 +1661,9 @@ class App:
 
         title_label = tk.Label(rasa_selection_frame, text="Pilih Rasa untuk Sirup Dua Rasa", font=("Helvetica", 24, "bold"), bg='lightblue')
         title_label.pack(pady=20)
+
+        user_id_label = tk.Label(rasa_selection_frame, text=f"User ID: {user_id}", font=("Helvetica", 12), bg='lightblue')
+        user_id_label.place(x=20, y=20)
 
         self.rasa_var1 = tk.StringVar()
         self.rasa_var2 = tk.StringVar()
@@ -1205,7 +1726,7 @@ class App:
         add_button = tk.Button(rasa_selection_frame, text="Add to Cart", command=self.add_to_cart, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         add_button.pack(pady=20)
 
-        back_button = tk.Button(rasa_selection_frame, text="Back", command=self.show_order_page, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button = tk.Button(rasa_selection_frame, text="Back", command=lambda: self.show_order_page(self.current_user_id), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         back_button.pack(pady=20)
 
         self.last_frame = rasa_selection_frame
@@ -1221,11 +1742,10 @@ class App:
         # If order is not empty, process it
         if self.order:
             # Show order page after adding order
-            self.show_order_page()
+            self.show_order_page(self.current_user_id)
         else:
             # If order is empty, directly go back to show_order_page
-            messagebox.showinfo("Info", "No items added to the order.")
-            self.show_order_page()
+            self.show_order_page(self.current_user_id)
 
     def update_order_from_counts(self):
         for item, quantity_label in list(self.counts.items()):
@@ -1234,13 +1754,13 @@ class App:
                     quantity = int(quantity_label.cget("text"))
                     if quantity > 0:
                         if item not in self.order:
-                            self.order[item] = {'quantity': quantity, 'rasa': [], 'persentase': []}
+                            self.order[item] = [{'quantity': quantity, 'variants': []}]
                         else:
-                            self.order[item]['quantity'] = quantity
+                            self.order[item][0]['quantity'] = quantity
                 except Exception as e:
                     print(f"Error: {e}")
             else:
-                # Hapus label yang tidak valid dari kamus counts
+                # Remove invalid labels from the counts dictionary
                 del self.counts[item]
 
     def process_order(self):
@@ -1286,20 +1806,27 @@ class App:
                 self.order[item] = {'quantity': quantity, 'rasa': [pilihan_rasa], 'persentase': [persentase_var]}
 
         # Lanjutkan dengan menampilkan ringkasan pesanan
-        self.show_order_summary()  # Menyertakan total pesanan saat memanggil show_order_summary
+        self.show_order_summary(self.current_user_id)
 
     def go_back_to_welcome_page(self):
         self.destroy_last_frame()
         self.create_user_welcome_page()
 
-    def show_order_summary(self):
+    def show_order_summary(self, user_id):
+        if user_id is None:
+            raise ValueError("User ID must not be None")
+
+        print("User ID:", user_id)
         self.destroy_last_frame()
 
         self.order_summary_frame = tk.Frame(self.root, bg='lightblue')
         self.order_summary_frame.pack(expand=True, fill='both')
 
-        summary_label = tk.Label(self.order_summary_frame, text="ORDER SUMMARY", font=("Helvetica", 18, "bold"), bg='lightblue')
+        summary_label = tk.Label(self.order_summary_frame, text="ORDER SUMMARY", font=("Helvetica", 24, "bold"), bg='lightblue')
         summary_label.pack(pady=(40, 20), padx=20)
+
+        user_id_label = tk.Label(self.order_summary_frame, text=f"User ID: {user_id}", font=("Helvetica", 12), bg='lightblue')
+        user_id_label.place(x=20, y=20)
 
         content_frame = tk.Frame(self.order_summary_frame, bg='lightblue')
         content_frame.pack(expand=True, fill='both', padx=20, pady=(0, 20))
@@ -1326,82 +1853,89 @@ class App:
 
         self.order_details = []  # Reset order_details
 
-        for nama_minuman, details in self.order.items():
-            quantity = details['quantity']
-            if quantity == 0:
-                continue
-            harga_satuan = self.menu_items[nama_minuman]['harga']
-            total_harga = quantity * harga_satuan
-            gambar_minuman = self.menu_items[nama_minuman].get('gambar')
-            rasa = ', '.join(details['rasa']) if 'sirup dua rasa' in nama_minuman.lower() else ''  # Menampilkan rasa hanya untuk sirup dua rasa
+        for nama_minuman, details_list in self.order.items():
+            for details in details_list:
+                quantity = details['quantity']
+                if quantity == 0:
+                    continue
+                harga_satuan = self.menu_items[nama_minuman]['harga']
+                total_harga = quantity * harga_satuan
+                gambar_minuman = self.menu_items[nama_minuman].get('gambar')
 
-            total_price += total_harga
+                # Append to order_details with the required information
+                self.order_details.append({
+                    'nama_minuman': nama_minuman,
+                    'quantity': quantity,
+                    'total_price': total_harga,
+                    'variants': details.get('variants', [])  # Include variants in order_details
+                })
 
-            self.order_details.append({
-                'nama_minuman': nama_minuman,
-                'quantity': quantity,
-                'harga_satuan': harga_satuan,
-                'total_price': total_harga,
-                'rasa': details.get('rasa', []) if 'sirup dua rasa' in nama_minuman.lower() else [],  # Add rasa to order details only for 'sirup dua rasa'
-                'persentase': details.get('persentase', 0)  # Add persentase to order details
-            })
+                total_price += total_harga
 
-            item_frame = tk.Frame(scrollable_frame, bg='white', bd=2, relief='groove')
-            item_frame.pack(fill='x', padx=10, pady=10)
-            row_number += 1
+                item_frame = tk.Frame(scrollable_frame, bg='white', bd=2, relief='groove')
+                item_frame.pack(fill='x', padx=10, pady=10)
+                row_number += 1
 
-            # Display image
-            if gambar_minuman:
-                canvas_item = tk.Canvas(item_frame, width=100, height=100, bg='white', highlightthickness=0)
-                canvas_item.pack(side='left', padx=10, pady=10)
-                try:
-                    image = Image.open(io.BytesIO(gambar_minuman))
-                    image = image.resize((100, 100))
-                    photo = ImageTk.PhotoImage(image)
-                    canvas_item.create_image(50, 50, image=photo)
-                    canvas_item.image = photo
-                except Exception as e:
-                    error_label = tk.Label(item_frame, text=f"Error: {e}", font=("Helvetica", 10), bg='white')
-                    error_label.pack(pady=10)
-            else:
-                placeholder_label = tk.Label(item_frame, text="No Image", font=("Helvetica", 10), bg='white')
-                placeholder_label.pack(side='left', padx=10, pady=10)
+                # Display image
+                if gambar_minuman:
+                    canvas_item = tk.Canvas(item_frame, width=100, height=100, bg='white', highlightthickness=0)
+                    canvas_item.pack(side='left', padx=10, pady=10)
+                    try:
+                        image = Image.open(io.BytesIO(gambar_minuman))
+                        image = image.resize((100, 100))
+                        photo = ImageTk.PhotoImage(image)
+                        canvas_item.create_image(50, 50, image=photo)
+                        canvas_item.image = photo
+                    except Exception as e:
+                        error_label = tk.Label(item_frame, text=f"Error: {e}", font=("Helvetica", 10), bg='white')
+                        error_label.pack(pady=10)
+                else:
+                    placeholder_label = tk.Label(item_frame, text="No Image", font=("Helvetica", 10), bg='white')
+                    placeholder_label.pack(side='left', padx=10, pady=10)
 
-            details_frame = tk.Frame(item_frame, bg='white')
-            details_frame.pack(side='left', fill='x', expand=True, padx=10, pady=10)
+                details_frame = tk.Frame(item_frame, bg='white')
+                details_frame.pack(side='left', fill='x', expand=True, padx=10, pady=10)
 
-            # Display details
-            nama_label = tk.Label(details_frame, text=nama_minuman, font=("Helvetica", 14, "bold"), bg='white')
-            nama_label.pack(anchor='w')
+                # Display details
+                nama_label = tk.Label(details_frame, text=nama_minuman, font=("Helvetica", 14, "bold"), bg='white')
+                nama_label.pack(anchor='w')
 
-            quantity_frame = tk.Frame(details_frame, bg='white')
-            quantity_frame.pack(anchor='w')
+                quantity_frame = tk.Frame(details_frame, bg='white')
+                quantity_frame.pack(anchor='w')
 
-            minus_button = tk.Button(quantity_frame, text="-", command=lambda n=nama_minuman: self.update_quantity(n, -1), bg='red', font=("Helvetica", 12, "bold"), padx=5, pady=5)
-            minus_button.pack(side='left', padx=(0, 5))
+                if 'sirup dua rasa' in nama_minuman.lower() and details.get('variants'):
+                    variant = details['variants'][0]
+                    minus_button = tk.Button(quantity_frame, text="-", command=lambda n=nama_minuman, r=variant['rasas'], p=variant['persentase']: self.update_quantity(n, -1, r, p), bg='red', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+                    plus_button = tk.Button(quantity_frame, text="+", command=lambda n=nama_minuman, r=variant['rasas'], p=variant['persentase']: self.update_quantity(n, 1, r, p), bg='green', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+                else:
+                    minus_button = tk.Button(quantity_frame, text="-", command=lambda n=nama_minuman: self.update_quantity(n, -1), bg='red', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+                    plus_button = tk.Button(quantity_frame, text="+", command=lambda n=nama_minuman: self.update_quantity(n, 1), bg='green', font=("Helvetica", 12, "bold"), padx=5, pady=5)
 
-            quantity_label = tk.Label(quantity_frame, text=str(quantity), font=("Helvetica", 12), bg='white')
-            quantity_label.pack(side='left', padx=(5, 5))
+                minus_button.pack(side='left', padx=(0, 5))
+                quantity_label = tk.Label(quantity_frame, text=str(quantity), font=("Helvetica", 12), bg='white')
+                quantity_label.pack(side='left', padx=(5, 5))
+                plus_button.pack(side='left', padx=(5, 0))
 
-            plus_button = tk.Button(quantity_frame, text="+", command=lambda n=nama_minuman: self.update_quantity(n, 1), bg='green', font=("Helvetica", 12, "bold"), padx=5, pady=5)
-            plus_button.pack(side='left', padx=(5, 0))
+                harga_label = tk.Label(details_frame, text=f"Harga Satuan: {self.format_price(harga_satuan)}", font=("Helvetica", 12), bg='white')
+                harga_label.pack(anchor='w')
 
-            harga_label = tk.Label(details_frame, text=f"Harga Satuan: {self.format_price(harga_satuan)}", font=("Helvetica", 12), bg='white')
-            harga_label.pack(anchor='w')
+                total_harga_label = tk.Label(details_frame, text=f"Total Harga: {self.format_price(total_harga)}", font=("Helvetica", 12), bg='white')
+                total_harga_label.pack(anchor='w')
 
-            total_harga_label = tk.Label(details_frame, text=f"Total Harga: {self.format_price(total_harga)}", font=("Helvetica", 12), bg='white')
-            total_harga_label.pack(anchor='w')
+                if 'sirup dua rasa' in nama_minuman.lower() and details.get('variants'):
+                    variant = details['variants'][0]
+                    rasa_label = tk.Label(details_frame, text=f"Rasa: {', '.join(variant['rasas'])}", font=("Helvetica", 12), bg='white')
+                    rasa_label.pack(anchor='w')
 
-            if rasa:  # Menampilkan rasa hanya untuk sirup dua rasa
-                rasa_label = tk.Label(details_frame, text=f"Rasa: {rasa}", font=("Helvetica", 12), bg='white')
-                rasa_label.pack(anchor='w')
+                    persentase_label = tk.Label(details_frame, text=f"Persentase: {variant['persentase']}", font=("Helvetica", 12), bg='white')
+                    persentase_label.pack(anchor='w')
 
-            # Baris terpisah untuk delete_button
-            delete_button_frame = tk.Frame(item_frame, bg='white')
-            delete_button_frame.pack(side='right')
+                # Separate row for delete_button
+                delete_button_frame = tk.Frame(item_frame, bg='white')
+                delete_button_frame.pack(side='right')
 
-            delete_button = tk.Button(delete_button_frame, text="Delete", command=lambda n=nama_minuman: self.delete_order(nama_minuman), bg='red', font=("Helvetica", 12, "bold"), padx=5, pady=5)
-            delete_button.pack(side='right', padx=(0, 25))
+                delete_button = tk.Button(delete_button_frame, text="Delete", command=lambda n=nama_minuman: self.delete_order(n), bg='red', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+                delete_button.pack(side='right', padx=(0, 25))
 
         total_price_label = tk.Label(self.order_summary_frame, text=f"Total Price: {self.format_price(total_price)}", font=("Helvetica", 16), bg='lightblue')
         total_price_label.pack(pady=(0, 20))
@@ -1412,7 +1946,7 @@ class App:
         add_order_button = tk.Button(button_frame, text="Add Order", command=self.add_order, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         add_order_button.pack(pady=20)
 
-        confirm_button = tk.Button(button_frame, text="Confirm Order", command=self.confirm_order, bg='blue', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        confirm_button = tk.Button(button_frame, text="Confirm Order", command=self.confirm_order, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         confirm_button.pack(pady=20)
 
         self.last_frame = self.order_summary_frame
@@ -1422,43 +1956,92 @@ class App:
         if confirmation:
             try:
                 del self.order[nama_minuman]
-                self.show_order_summary()
+                self.show_order_summary(self.current_user_id)
             except KeyError as e:
                 print(f"Error deleting order: {e}")
 
-    def update_quantity(self, nama_minuman, change):
-        try:
-            current_quantity = self.order[nama_minuman]['quantity']
-            new_quantity = max(0, current_quantity + change)
-            if new_quantity == 0:
-                del self.order[nama_minuman]
-            else:
-                self.order[nama_minuman]['quantity'] = new_quantity
-            self.show_order_summary()
-        except KeyError as e:
-            print(f"Error updating quantity: {e}")
+    def update_quantity(self, nama_minuman, delta, rasa=None, persentase=None):
+        if nama_minuman in self.order:
+            for details in self.order[nama_minuman]:
+                if 'variants' in details and details['variants']:
+                    for variant in details['variants']:
+                        if rasa is not None and persentase is not None:
+                            if set(variant['rasas']) == set(rasa) and variant['persentase'] == persentase:
+                                details['quantity'] += delta
+                                if details['quantity'] <= 0:
+                                    self.order[nama_minuman].remove(details)
+                                if not self.order[nama_minuman]:
+                                    del self.order[nama_minuman]
+                                self.show_order_summary(self.current_user_id)
+                                return
+                else:
+                    details['quantity'] += delta
+                    if details['quantity'] <= 0:
+                        self.order[nama_minuman].remove(details)
+                    if not self.order[nama_minuman]:
+                        del self.order[nama_minuman]
+                    self.show_order_summary(self.current_user_id)
+                    return
+        self.show_order_summary(self.current_user_id)
 
     def update_counts_from_order(self):
-        for item, details in self.order.items():
+        for item, details_list in self.order.items():
             if item in self.counts:
+                total_quantity = sum(details['quantity'] for details in details_list)
                 quantity_label = self.counts[item]
                 if quantity_label.winfo_exists():  # Check if the label still exists
-                    quantity_label.config(text=str(details['quantity']))
+                    quantity_label.config(text=str(total_quantity))
 
     def confirm_order(self):
-        confirmation = messagebox.askyesno("Konfirmasi Pesanan", "Apakah Anda yakin ingin mengkonfirmasi pesanan?")
-        if confirmation:
-            self.confirm_order_and_generate_qr()
-        else:
-            messagebox.showinfo("Konfirmasi", "Pembatalan konfirmasi pesanan.")
+        if not hasattr(self, 'order_details'):
+            self.populate_order_details()  # Populate order details if not already done
+        self.confirm_order_and_generate_qr()
+
+    def populate_order_details(self):
+        self.order_details = []
+        for nama_minuman, details_list in self.order.items():
+            for details in details_list:
+                quantity = details['quantity']
+                harga_satuan = self.menu_items[nama_minuman]['harga']
+                total_harga = quantity * harga_satuan
+                rasa = []
+                persentase = []
+
+                # Handling variants for 'Sirup Dua Rasa'
+                if 'variants' in details and 'sirup dua rasa' in nama_minuman.lower():
+                    variant = details['variants'][0]
+                    if isinstance(variant, dict):  # Check if variant is a dictionary
+                        rasa = variant.get('rasas', [])
+                        persentase = variant.get('persentase', [])
+                else:  # If not 'Sirup Dua Rasa', assign default empty rasa and persentase
+                    if 'sirup dua rasa' not in nama_minuman.lower():
+                        rasa = ''
+                        persentase = ''
+
+                self.order_details.append({
+                    'user_id': self.current_user_id,
+                    'nama_minuman': nama_minuman,
+                    'quantity': quantity,
+                    'total_price': total_harga,
+                    'rasa': rasa,
+                    'persentase': persentase
+                })
+
+        print("Order Details Debug:", self.order_details)  # Debug print
 
     def confirm_order_and_generate_qr(self):
         if not hasattr(self, 'order_details'):
-            self.order_details = []  # Initialize order_details if not already done
+            self.populate_order_details()  # Populate order details if not already done
 
-        reference_id = "testing_id_123"
+        print("Order Details:", self.order_details)  # Debug print
+
         total_amount = sum(order_detail['total_price'] for order_detail in self.order_details)
+        print("Total Amount:", total_amount)  # Debug print
+
         formatted_price = self.format_price(total_amount)
+        print("Formatted Price:", formatted_price)  # Debug print
+
+        reference_id = f"{self.current_user_id}_order_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"  # Generate reference_id based on user_id
 
         confirmation = messagebox.askyesno("Confirmation", f"The total amount to be paid is {formatted_price}. Do you want to proceed and generate the QR code?")
 
@@ -1491,12 +2074,21 @@ class App:
             messagebox.showerror("Error", f"Failed to create QR code: {error_message}")
 
     def show_payment_page(self, qr_code_string):
+        if self.current_user_id is None:
+            raise ValueError("User ID must not be None")
+
+        print("User ID:", self.current_user_id)
+
         self.destroy_last_frame()
+
         payment_page_frame = tk.Frame(self.root, bg='lightblue')
         payment_page_frame.pack(expand=True, fill='both')
 
-        payment_label = tk.Label(payment_page_frame, text="PAYMENT PAGE", font=("Helvetica", 20, "bold"), bg='lightyellow')
+        payment_label = tk.Label(payment_page_frame, text="PAYMENT PAGE", font=("Helvetica", 24, "bold"), bg='lightblue')
         payment_label.pack(pady=(80, 30), padx=20)
+
+        user_id_label = tk.Label(payment_page_frame, text=f"User ID: {self.current_user_id}", font=("Helvetica", 12), bg='lightblue')
+        user_id_label.place(x=20, y=20)
 
         qr = qrcode.QRCode(
             version=1,
@@ -1516,36 +2108,40 @@ class App:
         qr_label.image = qr_image  # Keep a reference to avoid garbage collection
         qr_label.pack(pady=(0, 50))
 
-        confirm_payment_button = tk.Button(payment_page_frame, text="Confirm Payment and Order", command=self.confirm_payment_and_order, bg='blue', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        confirm_payment_button = tk.Button(payment_page_frame, text="Confirm Payment and Order", command=lambda: self.confirm_payment_and_order(self.current_user_id), bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         confirm_payment_button.pack(pady=20)
 
-        back_button = tk.Button(payment_page_frame, text="Back", command=self.show_order_summary, bg='red', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button = tk.Button(payment_page_frame, text="Back", command=self.go_back_to_order_summary, bg='red', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         back_button.pack(pady=10)
 
         self.last_frame = payment_page_frame
 
-    def confirm_payment_and_order(self):
+    def go_back_to_order_summary(self):
+        self.destroy_last_frame()
+        self.show_order_summary(self.current_user_id)
+
+    def confirm_payment_and_order(self, user_id):
         try:
             self.db_manager.connect()
+            self.populate_order_details()
 
-            # Save all orders to the database
+            # Simpan semua pesanan ke database
             for order_detail in self.order_details:
+                order_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')  # Mendapatkan tanggal dan waktu saat ini
                 nama_minuman = order_detail['nama_minuman']
-                rasa_list = order_detail.get('rasa', [])
-                if isinstance(rasa_list, list):
-                    pilihan_rasa = ', '.join(rasa_list) if 'sirup dua rasa' in nama_minuman.lower() else ''
-                else:
-                    pilihan_rasa = ''
-                persentase = ', '.join(order_detail.get('persentase', []))  # Convert persentase list to string
+                pilihan_rasa = ', '.join(order_detail.get('rasa', [])) if 'Sirup Dua Rasa' in nama_minuman else ''
+                persentase = order_detail.get('persentase', '') if 'Sirup Dua Rasa' in nama_minuman else ''
                 jumlah = order_detail['quantity']
-                harga_satuan = order_detail['harga_satuan']
+                harga_satuan = self.menu_items[nama_minuman]['harga']
                 total_harga = order_detail['total_price']
                 status_pembayaran = 1  # status_pembayaran: 1 (paid)
                 status_pesanan = 'Completed'  # status_pesanan: Completed
 
-                print(f"Inserting order: {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
+                print(f"Inserting order: {order_date}, {user_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
 
                 self.db_manager.insert_order(
+                    order_date,
+                    user_id,
                     nama_minuman,
                     pilihan_rasa,
                     persentase,
@@ -1556,12 +2152,92 @@ class App:
                     status_pesanan
                 )
 
+            # Send order to the robot
+            threading.Thread(target=self.send_order_to_robot, args=(self.order_details,)).start()
+
             messagebox.showinfo("Payment Processed", "Payment processed successfully. Your order is in process.")
+            # Reset the quantity of all items to 0
+            self.reset_all_item_quantities()
             self.create_user_welcome_page()
+
         except Exception as e:
             messagebox.showerror("Error", f"Failed to process payment: {str(e)}")
         finally:
             self.db_manager.disconnect()
+
+    def send_order_to_robot(self, order_details):
+        HOST = "192.168.0.120"  # Ganti dengan alamat IP robot yang sebenarnya
+        PORT = 30002  # Ganti dengan port robot yang sebenarnya
+
+        try:
+            start_time = time.time()
+            for order_detail in order_details:
+                if order_detail['user_id'] != self.current_user_id:
+                    continue  # Skip this order if it doesn't match the current user_id
+
+                nama_minuman = order_detail['nama_minuman']
+                pilihan_rasa = ', '.join(order_detail.get('rasa', []))
+                persentase = order_detail.get('persentase', '')  # Dapatkan persentase dari order_detail jika ada
+                jumlah = order_detail['quantity']
+                kode_minuman = self.get_drink_code(nama_minuman, pilihan_rasa, persentase)
+
+                if kode_minuman is None:
+                    print(f"Cannot find code for drink: {nama_minuman} with pilihan_rasa: {pilihan_rasa} and persentase: {persentase}. Skipping.")
+                    continue  # Skip this order if no matching code is found
+
+                for _ in range(jumlah):
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                        s.bind((HOST, PORT))  # Bind to the port
+                        s.listen(5)  # Now wait for client connection.
+                        c, addr = s.accept()  # Establish connection with client.
+                        print("Connected to robot.")
+                        try:
+                            msg = c.recv(1024).decode()
+                            print("Pose Position = ", msg)
+                            msg = c.recv(1024).decode()
+                            print("Joint Positions = ", msg)
+                            msg = c.recv(1024).decode()
+                            print("Request = ", msg)
+                            time.sleep(1)
+                            print("")
+                            time.sleep(0.5)
+                            # Assuming the robot asks for data
+                            if msg == "asking_for_data":
+                                message = f"({kode_minuman})"
+                                c.send(message.encode())
+                                print(f"Sent message to robot: {message}")
+
+                        except socket.error as socketerror:
+                            print(socketerror)
+
+            end_time = time.time()  # Akhiri pengukuran waktu
+            elapsed_time = end_time - start_time  # Hitung waktu yang berlalu
+            print(f"Time taken to send orders to robot: {elapsed_time} seconds")
+
+        except ValueError as ve:
+            print(f"ValueError: {ve}. Defaulting to 1.")
+
+        c.close()
+
+    def load_minuman_data(self):
+        minuman_data = self.db_manager.fetch_minuman_data()
+        for kode_minuman, nama_minuman, pilihan_rasa, persentase in minuman_data:
+            self.minuman_data[kode_minuman] = (nama_minuman, pilihan_rasa, persentase)
+
+    # Method untuk mendapatkan kode minuman berdasarkan nama minuman, pilihan rasa, dan persentase
+    def get_drink_code(self, drink_name, pilihan_rasa, persentase):
+        for kode_minuman, (nama_minuman_db, pilihan_rasa_db, persentase_db) in self.minuman_data.items():
+            if nama_minuman_db.lower() == drink_name.lower() and pilihan_rasa_db.lower() == pilihan_rasa.lower() and persentase_db.lower() == persentase.lower():
+                return kode_minuman
+        return None
+
+    def reset_all_item_quantities(self):
+        # Reset quantities for all items
+        for nama_minuman, details_list in self.order.items():
+            for details in details_list:
+                details['quantity'] = 0
+        self.order = {nama_minuman: details_list for nama_minuman, details_list in self.order.items() if any(details['quantity'] > 0 for details in details_list)}
 
     def destroy_last_frame(self):
         if hasattr(self, 'last_frame') and self.last_frame is not None:
@@ -1578,5 +2254,6 @@ class App:
 if __name__ == "__main__":
     root = tk.Tk()
     root.attributes('-fullscreen', True)
+    # root.geometry('1920x1200')
     app = App(root)
     root.mainloop()
