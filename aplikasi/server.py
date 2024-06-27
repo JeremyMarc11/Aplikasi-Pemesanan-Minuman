@@ -5,7 +5,7 @@ import mysql.connector
 app = Flask(__name__)
 
 # Email credential yang digunakan untuk verifikasi signature
-EMAIL_CREDENTIAL = "api-smartlink-sbx@petra.ac.id"
+EMAIL_CREDENTIAL = "xxyyzz"
 
 class DatabaseManager:
     def __init__(self, host, port, username, password, database):
