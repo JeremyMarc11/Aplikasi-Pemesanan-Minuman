@@ -15,7 +15,8 @@ import csv
 from tkcalendar import DateEntry
 import socket
 import time
-import threading
+from threading import Thread
+from queue import Queue
 import pandas as pd
 
 class DatabaseManager:
@@ -43,12 +44,10 @@ class DatabaseManager:
             print("Error:", e)
 
     def disconnect(self):
-        try:
-            if self.conn:
-                self.conn.close()
-                print("Disconnected from database.")
-        except mysql.connector.Error as e:
-            print("Error:", e)
+        if self.conn is not None and self.conn.is_connected():
+            self.cursor.close()
+            self.conn.close()
+            print("Disconnected from database.")
 
     def insert_order(self, order_date, user_id, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan):
         query = """
@@ -119,8 +118,6 @@ class DatabaseManager:
         minuman_data = self.cursor.fetchall()
         self.disconnect()
         return minuman_data
-
-API_KEY = 'xnd_development_KQmfElKh3di1BvU2zs369Lx5iIU71CPcLnHNwiAe5Nqo8Gpsi6AEfIrMuFVUF8V'
 
 class App:
     def __init__(self, root):
@@ -218,11 +215,11 @@ class App:
         welcome_label.pack(pady=(250, 20))
 
         self.username_entry = tk.Entry(self.login_frame, font=("Helvetica", 20))
-        self.username_entry.insert(0, "admin")
+        self.username_entry.insert(0, "user")
         self.username_entry.pack(pady=10)
 
         self.password_entry = tk.Entry(self.login_frame, show="*", font=("Helvetica", 20))
-        self.password_entry.insert(0, "admin123")
+        self.password_entry.insert(0, "user123")
         self.password_entry.pack(pady=10)
 
         login_button = tk.Button(self.login_frame, text="LOGIN", command=self.login, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
@@ -237,7 +234,6 @@ class App:
         if username == "user" and password == "user123":
             self.user_logged_in = True
             try:
-                self.db_manager = DatabaseManager('127.0.0.1', 3306, 'root', '', 'pemesanan_minuman')
                 messagebox.showinfo("Login Success", "Berhasil login sebagai user.")
                 self.create_user_welcome_page()
             except Exception as e:
@@ -247,7 +243,6 @@ class App:
         elif username == "admin" and password == "admin123":
             self.admin_logged_in = True
             try:
-                self.db_manager = DatabaseManager('127.0.0.1', 3306, 'root', '', 'pemesanan_minuman')
                 messagebox.showinfo("Login Success", "Berhasil login sebagai admin.")
                 self.create_admin_welcome_page()
             except Exception as e:
@@ -269,6 +264,8 @@ class App:
 
             order_button = tk.Button(self.user_welcome_frame, text="ORDER NOW", command=self.create_order_for_user, bg='orange', font=("Helvetica", 20, "bold"), padx=10, pady=5)
             order_button.pack(pady=20)
+            
+            logout_image = tk.PhotoImage(file="C:/Users/OMEN/Documents/Teknik Elektro/TA/Aplikasi Pemesanan Minuman/aplikasi/assets/logout.png")
 
             # Load gambar logout
             logout_image = tk.PhotoImage(file="assets/logout.png")  # Ganti dengan path file gambar logout yang sebenarnya
@@ -334,6 +331,7 @@ class App:
         if result and result[0] == password:
             return True
         return False
+    
     def logout(self):
         self.user_logged_in = False
         self.admin_logged_in = False
@@ -2041,37 +2039,105 @@ class App:
         formatted_price = self.format_price(total_amount)
         print("Formatted Price:", formatted_price)  # Debug print
 
-        reference_id = f"{self.current_user_id}_order_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"  # Generate reference_id based on user_id
+        reference_id = f"{self.current_user_id}"  # Generate reference_id based on user_id
 
         confirmation = messagebox.askyesno("Confirmation", f"The total amount to be paid is {formatted_price}. Do you want to proceed and generate the QR code?")
 
         if confirmation:
-            self.generate_qr_code(reference_id, total_amount)
+            try:
+                self.db_manager.connect()
+                self.populate_order_details()
+
+                # Simpan semua pesanan ke database dengan status_pembayaran = 0 (belum dibayar)
+                for order_detail in self.order_details:
+                    order_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')  
+                    user_id = order_detail['user_id']
+                    nama_minuman = order_detail['nama_minuman']
+                    pilihan_rasa = ', '.join(order_detail.get('rasa', [])) if 'Sirup Dua Rasa' in nama_minuman else ''
+                    persentase = order_detail.get('persentase', '') if 'Sirup Dua Rasa' in nama_minuman else ''
+                    jumlah = order_detail['quantity']
+                    harga_satuan = self.menu_items[nama_minuman]['harga']
+                    total_harga = order_detail['total_price']
+                    status_pembayaran = 0  # Set status_pembayaran to 0 initially
+                    status_pesanan = 'Completed'  # status_pesanan: Completed
+
+                    print(f"Inserting order: {order_date}, {user_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
+
+                    self.db_manager.insert_order(
+                        order_date,
+                        user_id,
+                        nama_minuman,
+                        pilihan_rasa,
+                        persentase,
+                        jumlah,
+                        harga_satuan,
+                        total_harga,
+                        status_pembayaran,
+                        status_pesanan
+                    )
+
+                # Setelah berhasil menyimpan pesanan, generate QR code
+                self.generate_qr_code(reference_id, total_amount)
+
+            except Exception as e:
+                print(f"Error processing order: {e}")
+                messagebox.showerror("Error", f"Failed to process order: {str(e)}")
+            finally:
+                self.db_manager.disconnect()
 
     def generate_qr_code(self, reference_id, total_amount):
         headers = {
             'Content-Type': 'application/json',
-            'Authorization': f'Basic {base64.b64encode((API_KEY + ":").encode()).decode()}',
-            'api-version': '2022-07-31'
+            'Authorization': 'Basic YXBpLXNtYXJ0bGluay1zYnhAcGV0cmEuYWMuaWQ6ZEhvRjBTMzJ2MFpCbVd2'
         }
+
+        items = []
+        for order_detail in self.order_details:
+            items.append({
+                "name": order_detail['nama_minuman'],
+                "amount": order_detail['total_price'],
+                "qty": order_detail['quantity']
+            })
 
         data = {
-            "reference_id": reference_id,
-            "type": "DYNAMIC",
-            "currency": "IDR",
+            "order_id": reference_id,
             "amount": total_amount,
-            "expires_at": (datetime.datetime.utcnow() + datetime.timedelta(hours=1)).isoformat() + 'Z'
+            "description": "Order created via generate_qr_code",
+            "customer": {
+                "name": "John",
+                "email": "john.doe@gmail.com",
+                "phone": "089798798686"
+            },
+            "item": items,  # Ensure items list is correctly formatted
+            "channel": ["WALLET_QRIS"],
+            "type": "payment-page",
+            "payment_mode": "CLOSE",
+            "expired_time": "",
+            "callback_url": "https://9956-203-189-122-12.ngrok-free.app/callback",
+            "success_redirect_url": "-",
+            "failed_redirect_url": "-"
         }
 
-        response = requests.post('https://api.xendit.co/qr_codes', headers=headers, json=data)
+        print("Request Payload:", data)  # Debug print
 
-        if response.status_code == 201:
-            qr_code_data = response.json()
-            qr_code_string = qr_code_data.get('qr_string')
-            self.show_payment_page(qr_code_string)
-        else:
-            error_message = response.text
-            messagebox.showerror("Error", f"Failed to create QR code: {error_message}")
+        # Make the POST request to create order in Pakar Digital
+        try:
+            response = requests.post('https://payment-service-sbx.pakar-digital.com/api/payment/create-order', headers=headers, json=data)
+
+            print("Response Status Code:", response.status_code)  # Debug print
+            print("Response Content:", response.text)  # Debug print
+
+            if response.status_code == 200:
+                order_data = response.json()
+                qr_code_string = order_data.get('qr_string', '')  # Assuming 'qr_string' is in the response
+                self.show_payment_page(qr_code_string)
+            else:
+                error_message = response.text
+                messagebox.showerror("Error", f"Failed to create order: {error_message}")
+
+        except Exception as e:
+            print(f"Error generating QR code: {e}")
+            messagebox.showerror("Error", f"Failed to generate QR code: {str(e)}")
 
     def show_payment_page(self, qr_code_string):
         if self.current_user_id is None:
@@ -2100,7 +2166,7 @@ class App:
         qr.make(fit=True)
 
         img = qr.make_image(fill='black', back_color='white')
-        img = img.resize((400, 400), Image.Resampling.LANCZOS)
+        img = img.resize((400, 400), Image.LANCZOS)
 
         qr_image = ImageTk.PhotoImage(img)
 
@@ -2108,117 +2174,128 @@ class App:
         qr_label.image = qr_image  # Keep a reference to avoid garbage collection
         qr_label.pack(pady=(0, 50))
 
-        confirm_payment_button = tk.Button(payment_page_frame, text="Confirm Payment and Order", command=lambda: self.confirm_payment_and_order(self.current_user_id), bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
-        confirm_payment_button.pack(pady=20)
+        confirm_payment_button = tk.Button(payment_page_frame, text="Confirm Payment and Order", command=self.redirect_to_welcome_page, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        confirm_payment_button.pack(pady=10)
 
         back_button = tk.Button(payment_page_frame, text="Back", command=self.go_back_to_order_summary, bg='red', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         back_button.pack(pady=10)
 
         self.last_frame = payment_page_frame
 
+    def redirect_to_welcome_page(self):
+        print("Redirecting to welcome page after successful payment.")
+        # Example:
+        self.destroy_last_frame()
+        self.create_user_welcome_page()
+    
     def go_back_to_order_summary(self):
         self.destroy_last_frame()
         self.show_order_summary(self.current_user_id)
 
-    def confirm_payment_and_order(self, user_id):
-        try:
-            self.db_manager.connect()
-            self.populate_order_details()
+    # def confirm_payment_and_order(self, user_id):
+    #     try:
+    #         self.db_manager.connect()
+    #         self.populate_order_details()
 
-            # Simpan semua pesanan ke database
-            for order_detail in self.order_details:
-                order_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')  # Mendapatkan tanggal dan waktu saat ini
-                nama_minuman = order_detail['nama_minuman']
-                pilihan_rasa = ', '.join(order_detail.get('rasa', [])) if 'Sirup Dua Rasa' in nama_minuman else ''
-                persentase = order_detail.get('persentase', '') if 'Sirup Dua Rasa' in nama_minuman else ''
-                jumlah = order_detail['quantity']
-                harga_satuan = self.menu_items[nama_minuman]['harga']
-                total_harga = order_detail['total_price']
-                status_pembayaran = 1  # status_pembayaran: 1 (paid)
-                status_pesanan = 'Completed'  # status_pesanan: Completed
+    #         # Send order to the robot
+    #         # threading.Thread(target=self.send_order_to_robot, args=(self.order_details,)).start()
 
-                print(f"Inserting order: {order_date}, {user_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
+    #         # Simulate payment processing success
+    #         # For actual implementation, replace this with actual payment processing logic
+    #         payment_successful = True  # Assume payment is successful for demo purposes
 
-                self.db_manager.insert_order(
-                    order_date,
-                    user_id,
-                    nama_minuman,
-                    pilihan_rasa,
-                    persentase,
-                    jumlah,
-                    harga_satuan,
-                    total_harga,
-                    status_pembayaran,
-                    status_pesanan
-                )
+    #         if payment_successful:
+    #             # Update status_pembayaran to 1 (paid) after successful payment
+    #             for order_detail in self.order_details:
+    #                 order_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    #                 nama_minuman = order_detail['nama_minuman']
+    #                 pilihan_rasa = ', '.join(order_detail.get('rasa', [])) if 'Sirup Dua Rasa' in nama_minuman else ''
+    #                 persentase = order_detail.get('persentase', '') if 'Sirup Dua Rasa' in nama_minuman else ''
+    #                 jumlah = order_detail['quantity']
+    #                 harga_satuan = self.menu_items[nama_minuman]['harga']
+    #                 total_harga = order_detail['total_price']
+    #                 status_pembayaran = 1  # Set status_pembayaran to 1 after successful payment
+    #                 status_pesanan = 'Completed'  # status_pesanan: Completed
 
-            # Send order to the robot
-            threading.Thread(target=self.send_order_to_robot, args=(self.order_details,)).start()
+    #                 print(f"Updating order payment status: {order_date}, {user_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
 
-            messagebox.showinfo("Payment Processed", "Payment processed successfully. Your order is in process.")
-            # Reset the quantity of all items to 0
-            self.reset_all_item_quantities()
-            self.create_user_welcome_page()
+    #                 # Update the order in the database with the new payment status
+    #                 self.db_manager.update_order_payment_status(
+    #                     order_date,
+    #                     user_id,
+    #                     nama_minuman,
+    #                     pilihan_rasa,
+    #                     persentase,
+    #                     jumlah,
+    #                     harga_satuan,
+    #                     total_harga,
+    #                     status_pembayaran,
+    #                     status_pesanan
+    #                 )
 
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to process payment: {str(e)}")
-        finally:
-            self.db_manager.disconnect()
+    #         messagebox.showinfo("Payment Processed", "Payment processed successfully. Your order is in process.")
+    #         self.reset_all_item_quantities()
+    #         self.create_user_welcome_page()
 
-    def send_order_to_robot(self, order_details):
-        HOST = "192.168.0.120"  # Ganti dengan alamat IP robot yang sebenarnya
-        PORT = 30002  # Ganti dengan port robot yang sebenarnya
+    #     except Exception as e:
+    #         messagebox.showerror("Error", f"Failed to process payment: {str(e)}")
+    #     finally:
+    #         self.db_manager.disconnect()
 
-        try:
-            start_time = time.time()
-            for order_detail in order_details:
-                if order_detail['user_id'] != self.current_user_id:
-                    continue  # Skip this order if it doesn't match the current user_id
+    # def send_order_to_robot(self, order_details):
+    #     HOST = "192.168.0.120"  # Ganti dengan alamat IP robot yang sebenarnya
+    #     PORT = 30002  # Ganti dengan port robot yang sebenarnya
 
-                nama_minuman = order_detail['nama_minuman']
-                pilihan_rasa = ', '.join(order_detail.get('rasa', []))
-                persentase = order_detail.get('persentase', '')  # Dapatkan persentase dari order_detail jika ada
-                jumlah = order_detail['quantity']
-                kode_minuman = self.get_drink_code(nama_minuman, pilihan_rasa, persentase)
+    #     try:
+    #         start_time = time.time()
+    #         for order_detail in order_details:
+    #             if order_detail['user_id'] != self.current_user_id:
+    #                 continue  # Skip this order if it doesn't match the current user_id
 
-                if kode_minuman is None:
-                    print(f"Cannot find code for drink: {nama_minuman} with pilihan_rasa: {pilihan_rasa} and persentase: {persentase}. Skipping.")
-                    continue  # Skip this order if no matching code is found
+    #             nama_minuman = order_detail['nama_minuman']
+    #             pilihan_rasa = ', '.join(order_detail.get('rasa', []))
+    #             persentase = order_detail.get('persentase', '')  # Dapatkan persentase dari order_detail jika ada
+    #             jumlah = order_detail['quantity']
+    #             kode_minuman = self.get_drink_code(nama_minuman, pilihan_rasa, persentase)
 
-                for _ in range(jumlah):
-                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                        s.bind((HOST, PORT))  # Bind to the port
-                        s.listen(5)  # Now wait for client connection.
-                        c, addr = s.accept()  # Establish connection with client.
-                        print("Connected to robot.")
-                        try:
-                            msg = c.recv(1024).decode()
-                            print("Pose Position = ", msg)
-                            msg = c.recv(1024).decode()
-                            print("Joint Positions = ", msg)
-                            msg = c.recv(1024).decode()
-                            print("Request = ", msg)
-                            time.sleep(1)
-                            print("")
-                            time.sleep(0.5)
-                            # Assuming the robot asks for data
-                            if msg == "asking_for_data":
-                                message = f"({kode_minuman})"
-                                c.send(message.encode())
-                                print(f"Sent message to robot: {message}")
+    #             if kode_minuman is None:
+    #                 print(f"Cannot find code for drink: {nama_minuman} with pilihan_rasa: {pilihan_rasa} and persentase: {persentase}. Skipping.")
+    #                 continue  # Skip this order if no matching code is found
 
-                        except socket.error as socketerror:
-                            print(socketerror)
+    #             for _ in range(jumlah):
+    #                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    #                     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    #                     s.bind((HOST, PORT))  # Bind to the port
+    #                     s.listen(5)  # Now wait for client connection.
+    #                     c, addr = s.accept()  # Establish connection with client.
+    #                     print("Connected to robot.")
+    #                     try:
+    #                         msg = c.recv(1024).decode()
+    #                         print("Pose Position = ", msg)
+    #                         msg = c.recv(1024).decode()
+    #                         print("Joint Positions = ", msg)
+    #                         msg = c.recv(1024).decode()
+    #                         print("Request = ", msg)
+    #                         time.sleep(1)
+    #                         print("")
+    #                         time.sleep(0.5)
+    #                         # Assuming the robot asks for data
+    #                         if msg == "asking_for_data":
+    #                             message = f"({kode_minuman})"
+    #                             c.send(message.encode())
+    #                             print(f"Sent message to robot: {message}")
 
-            end_time = time.time()  # Akhiri pengukuran waktu
-            elapsed_time = end_time - start_time  # Hitung waktu yang berlalu
-            print(f"Time taken to send orders to robot: {elapsed_time} seconds")
+    #                     except socket.error as socketerror:
+    #                         print(socketerror)
 
-        except ValueError as ve:
-            print(f"ValueError: {ve}. Defaulting to 1.")
+    #         end_time = time.time()  # Akhiri pengukuran waktu
+    #         elapsed_time = end_time - start_time  # Hitung waktu yang berlalu
+    #         print(f"Time taken to send orders to robot: {elapsed_time} seconds")
 
-        c.close()
+    #     except ValueError as ve:
+    #         print(f"ValueError: {ve}. Defaulting to 1.")
+
+    #     c.close()
 
     def load_minuman_data(self):
         minuman_data = self.db_manager.fetch_minuman_data()
@@ -2250,10 +2327,9 @@ class App:
         for attr in attributes_to_remove:
             if hasattr(self, attr):
                 delattr(self, attr)
-
+    
 if __name__ == "__main__":
     root = tk.Tk()
     root.attributes('-fullscreen', True)
-    # root.geometry('1920x1200')
     app = App(root)
     root.mainloop()
