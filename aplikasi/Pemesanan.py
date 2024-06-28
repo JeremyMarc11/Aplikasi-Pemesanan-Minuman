@@ -22,7 +22,6 @@ import pandas as pd
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 
-
 class DatabaseManager:
     def __init__(self, host, port, username, password, database):
         self.conn = None
