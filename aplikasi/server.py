@@ -7,7 +7,7 @@ import logging
 app = Flask(__name__)
 
 # Email credential yang digunakan untuk verifikasi signature
-EMAIL_CREDENTIAL = "api-smartlink-sbx@petra.ac.id"
+EMAIL_CREDENTIAL = "xxyyzz"
 
 payment_statuses = {}
 
