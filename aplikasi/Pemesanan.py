@@ -270,7 +270,7 @@ class App:
             order_button = tk.Button(self.user_welcome_frame, text="ORDER NOW", command=self.create_order_for_user, bg='orange', font=("Helvetica", 20, "bold"), padx=10, pady=5)
             order_button.pack(pady=20)
             
-            logout_image = tk.PhotoImage(file="C:/Users/OMEN/Documents/Teknik Elektro/TA/Aplikasi Pemesanan Minuman/aplikasi/assets/logout.png")
+            logout_image = tk.PhotoImage(file="assets/logout.png")
             logout_image_resized = logout_image.subsample(5, 5)
 
             # Buat tombol logout dengan gambar yang telah diubah ukurannya
@@ -295,7 +295,7 @@ class App:
             enter_button = tk.Button(self.admin_welcome_frame, text="ENTER", command=self.create_admin_page, bg='orange', font=("Helvetica", 20, "bold"), padx=10, pady=5)
             enter_button.pack(pady=20)
 
-            logout_image = tk.PhotoImage(file="C:/Users/OMEN/Documents/Teknik Elektro/TA/Aplikasi Pemesanan Minuman/aplikasi/assets/logout.png")
+            logout_image = tk.PhotoImage(file="assets/logout.png")
             logout_image_resized = logout_image.subsample(5, 5)
 
             # Buat tombol logout dengan gambar yang telah diubah ukurannya
