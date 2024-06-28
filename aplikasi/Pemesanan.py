@@ -15,9 +15,13 @@ import csv
 from tkcalendar import DateEntry
 import socket
 import time
+import threading
 from threading import Thread
 from queue import Queue
 import pandas as pd
+from bs4 import BeautifulSoup
+import xml.etree.ElementTree as ET
+
 
 class DatabaseManager:
     def __init__(self, host, port, username, password, database):
@@ -148,6 +152,7 @@ class App:
         self.current_user_id = None
         self.previous_user_id = None
         self.sales_data = []
+        self.polling = False
 
         self.sales_data_frame = None
         self.sales_table = None
@@ -266,9 +271,6 @@ class App:
             order_button.pack(pady=20)
             
             logout_image = tk.PhotoImage(file="C:/Users/OMEN/Documents/Teknik Elektro/TA/Aplikasi Pemesanan Minuman/aplikasi/assets/logout.png")
-
-            # Load gambar logout
-            logout_image = tk.PhotoImage(file="assets/logout.png")  # Ganti dengan path file gambar logout yang sebenarnya
             logout_image_resized = logout_image.subsample(5, 5)
 
             # Buat tombol logout dengan gambar yang telah diubah ukurannya
@@ -293,8 +295,7 @@ class App:
             enter_button = tk.Button(self.admin_welcome_frame, text="ENTER", command=self.create_admin_page, bg='orange', font=("Helvetica", 20, "bold"), padx=10, pady=5)
             enter_button.pack(pady=20)
 
-            # Load gambar logout
-            logout_image = tk.PhotoImage(file="assets/logout.png")  # Ganti dengan path file gambar logout yang sebenarnya
+            logout_image = tk.PhotoImage(file="C:/Users/OMEN/Documents/Teknik Elektro/TA/Aplikasi Pemesanan Minuman/aplikasi/assets/logout.png")
             logout_image_resized = logout_image.subsample(5, 5)
 
             # Buat tombol logout dengan gambar yang telah diubah ukurannya
@@ -2048,9 +2049,9 @@ class App:
                 self.db_manager.connect()
                 self.populate_order_details()
 
-                # Simpan semua pesanan ke database dengan status_pembayaran = 0 (belum dibayar)
+                # Save all orders to the database with status_pembayaran = 0 (not paid)
                 for order_detail in self.order_details:
-                    order_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')  
+                    order_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     user_id = order_detail['user_id']
                     nama_minuman = order_detail['nama_minuman']
                     pilihan_rasa = ', '.join(order_detail.get('rasa', [])) if 'Sirup Dua Rasa' in nama_minuman else ''
@@ -2076,7 +2077,7 @@ class App:
                         status_pesanan
                     )
 
-                # Setelah berhasil menyimpan pesanan, generate QR code
+                # After saving the order, generate QR code
                 self.generate_qr_code(reference_id, total_amount)
 
             except Exception as e:
@@ -2093,9 +2094,13 @@ class App:
 
         items = []
         for order_detail in self.order_details:
+            price_per_item = order_detail['total_price'] / order_detail['quantity']
+            expected_total_price = price_per_item * order_detail['quantity']
+            if order_detail['total_price'] != expected_total_price:
+                raise ValueError(f"Mismatch in total price for item {order_detail['nama_minuman']}: expected {expected_total_price}, got {order_detail['total_price']}")
             items.append({
                 "name": order_detail['nama_minuman'],
-                "amount": order_detail['total_price'],
+                "amount": price_per_item,
                 "qty": order_detail['quantity']
             })
 
@@ -2108,42 +2113,55 @@ class App:
                 "email": "john.doe@gmail.com",
                 "phone": "089798798686"
             },
-            "item": items,  # Ensure items list is correctly formatted
+            "item": items,
             "channel": ["WALLET_QRIS"],
             "type": "payment-page",
             "payment_mode": "CLOSE",
-            "expired_time": "",
-            "callback_url": "https://9956-203-189-122-12.ngrok-free.app/callback",
+            "expired_time": "",  # Set an actual expiration time if needed
+            "callback_url": "https://880a-203-189-122-12.ngrok-free.app/callback",
             "success_redirect_url": "-",
             "failed_redirect_url": "-"
         }
 
-        print("Request Payload:", data)  # Debug print
+        debug_mode = True  # Set to False to disable debug prints
+        if debug_mode:
+            print("Request Payload:", data)  # Debug print
 
-        # Make the POST request to create order in Pakar Digital
         try:
             response = requests.post('https://payment-service-sbx.pakar-digital.com/api/payment/create-order', headers=headers, json=data)
 
-            print("Response Status Code:", response.status_code)  # Debug print
-            print("Response Content:", response.text)  # Debug print
+            if debug_mode:
+                print("Response Status Code:", response.status_code)  # Debug print
+                print("Response Content:", response.text)  # Debug print
 
             if response.status_code == 200:
                 order_data = response.json()
-                qr_code_string = order_data.get('qr_string', '')  # Assuming 'qr_string' is in the response
-                self.show_payment_page(qr_code_string)
+                payment_url = order_data['data'].get('payment_url')  # Assume 'payment_url' is in the response
+
+                if payment_url:
+                    self.show_payment_page(payment_url)
+                    self.start_polling(reference_id)
+                else:
+                    if debug_mode:
+                        print("Payment URL not found in response:", order_data)
+                    messagebox.showerror("Error", "Failed to retrieve payment URL.")
             else:
                 error_message = response.text
+                if debug_mode:
+                    print("Error response from server:", error_message)
                 messagebox.showerror("Error", f"Failed to create order: {error_message}")
 
         except Exception as e:
-            print(f"Error generating QR code: {e}")
+            if debug_mode:
+                print(f"Error generating QR code: {e}")
             messagebox.showerror("Error", f"Failed to generate QR code: {str(e)}")
 
-    def show_payment_page(self, qr_code_string):
+    def show_payment_page(self, payment_url):
         if self.current_user_id is None:
             raise ValueError("User ID must not be None")
 
         print("User ID:", self.current_user_id)
+        print("Payment URL:", payment_url)
 
         self.destroy_last_frame()
 
@@ -2162,7 +2180,7 @@ class App:
             box_size=10,
             border=4,
         )
-        qr.add_data(qr_code_string)
+        qr.add_data(payment_url)
         qr.make(fit=True)
 
         img = qr.make_image(fill='black', back_color='white')
@@ -2174,23 +2192,56 @@ class App:
         qr_label.image = qr_image  # Keep a reference to avoid garbage collection
         qr_label.pack(pady=(0, 50))
 
-        confirm_payment_button = tk.Button(payment_page_frame, text="Confirm Payment and Order", command=self.redirect_to_welcome_page, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
-        confirm_payment_button.pack(pady=10)
-
-        back_button = tk.Button(payment_page_frame, text="Back", command=self.go_back_to_order_summary, bg='red', font=("Helvetica", 12, "bold"), padx=10, pady=5)
-        back_button.pack(pady=10)
-
         self.last_frame = payment_page_frame
 
+    def start_polling(self, reference_id):
+        """
+        Start polling the server for the payment status.
+        """
+        self.polling = True
+        threading.Thread(target=self.poll_payment_status, args=(reference_id,)).start()
+
+    def stop_polling(self):
+        """
+        Stop polling the server for the payment status.
+        """
+        self.polling = False
+
+    def poll_payment_status(self, reference_id):
+        """
+        Poll the server for the payment status.
+        """
+        while self.polling:
+            try:
+                response = requests.get(f'http://localhost:7000/payment_status/{reference_id}')
+                if response.status_code == 200:
+                    status_data = response.json()
+                    if status_data['status'] == 'success':
+                        self.polling = False
+                        self.on_payment_success()
+                time.sleep(5)  # Poll every 5 seconds
+            except Exception as e:
+                print(f"Error polling payment status: {e}")
+                time.sleep(5)
+
+    def on_payment_success(self):
+        """
+        Handle actions to be taken when payment is successful.
+        """
+        messagebox.showinfo("Payment Success", "Your payment was successful!")
+        self.redirect_to_welcome_page()
+
     def redirect_to_welcome_page(self):
+        """
+        Redirect the user to the welcome page after successful payment.
+        """
         print("Redirecting to welcome page after successful payment.")
-        # Example:
         self.destroy_last_frame()
         self.create_user_welcome_page()
-    
-    def go_back_to_order_summary(self):
-        self.destroy_last_frame()
-        self.show_order_summary(self.current_user_id)
+
+    def on_closing(self):
+        self.polling = False
+        self.root.destroy()
 
     # def confirm_payment_and_order(self, user_id):
     #     try:
