@@ -6,3 +6,4 @@ qrcode==7.4.2
 tkcalendar==1.6.1
 pandas==2.2.2
 beautifulsoup4==4.12.3
+flask==3.0.3
