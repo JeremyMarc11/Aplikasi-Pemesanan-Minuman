@@ -7,7 +7,7 @@ import logging
 app = Flask(__name__)
 
 # Email credential yang digunakan untuk verifikasi signature
-EMAIL_CREDENTIAL = "xxyyzz"
+EMAIL_CREDENTIAL = "api-smartlink-sbx@petra.ac.id"
 
 payment_statuses = {}
 
@@ -42,22 +42,22 @@ class DatabaseManager:
             self.conn.close()
             logging.info("Disconnected from database.")
 
-    def update_payment_status_in_db(self, user_id):
+    def update_payment_status_in_db(self, order_id):
         try:
             self.connect()
-            self.update_payment_status(user_id)
+            self.update_payment_status(order_id)
             self.disconnect()
-            logging.info(f"Updated payment status for user_id {user_id} to 1")
+            logging.info(f"Updated payment status for order_id {order_id} to 1")
         except Exception as e:
             logging.error(f"Error updating payment status in database: {e}")
             raise
 
-    def update_payment_status(self, user_id):
-        query = "UPDATE ringkasan_pesanan SET status_pembayaran = 1 WHERE user_id = %s"
+    def update_payment_status(self, order_id):
+        query = "UPDATE ringkasan_pesanan SET status_pembayaran = 1 WHERE order_id = %s"
         try:
-            self.cursor.execute(query, (user_id,))
+            self.cursor.execute(query, (order_id,))
             self.conn.commit()
-            logging.info(f"Payment status updated successfully for user_id {user_id}.")
+            logging.info(f"Payment status updated successfully for order_id {order_id}.")
         except mysql.connector.Error as e:
             logging.error(f"Error executing update query: {e}")
             raise
@@ -82,14 +82,14 @@ def callback():
                 return jsonify({"status": "error", "message": f"Missing field in data: {field}"}), 400
 
         # Ambil data yang diperlukan dari callback
-        user_id = data['data']['order_id']  # Ubah order_id menjadi user_id
+        order_id = data['data']['order_id']  # Ubah order_id menjadi order_id
         amount = data['data']['amount']
         channel = data['data']['channel']
         transaction_time = data['data']['transaction_time']
         received_signature = data['data']['signature']
 
         # Gabungkan data untuk membuat signature
-        string_to_hash = f"{user_id}{amount}{channel}{transaction_time}{EMAIL_CREDENTIAL}"
+        string_to_hash = f"{order_id}{amount}{channel}{transaction_time}{EMAIL_CREDENTIAL}"
 
         # Buat hash SHA-256 dari string gabungan
         calculated_signature = hashlib.sha256(string_to_hash.encode()).hexdigest()
@@ -104,13 +104,13 @@ def callback():
             status = data['data']['status']
 
             # Update status pembayaran di database
-            db_manager.update_payment_status_in_db(user_id)
+            db_manager.update_payment_status_in_db(order_id)
 
             # Set payment status to success in in-memory storage
-            payment_statuses[user_id] = 'success'
+            payment_statuses[order_id] = 'success'
 
             logging.info(f"Transaction ID: {transaction_id}")
-            logging.info(f"User ID: {user_id}")
+            logging.info(f"Order ID: {order_id}")
             logging.info(f"Amount: {amount}")
             logging.info(f"Status: {status}")
 
@@ -123,12 +123,12 @@ def callback():
         logging.error(f"Error processing callback: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/payment_status/<user_id>', methods=['GET'])
-def payment_status(user_id):
+@app.route('/payment_status/<order_id>', methods=['GET'])
+def payment_status(order_id):
     """
     Endpoint for checking the payment status of a specific user.
     """
-    status = payment_statuses.get(user_id, 'pending')
+    status = payment_statuses.get(order_id, 'pending')
     return jsonify({"status": status}), 200
 
 @app.route('/extract_qris_code', methods=['POST'])
