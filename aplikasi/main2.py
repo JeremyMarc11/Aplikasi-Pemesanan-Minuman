@@ -2236,7 +2236,7 @@ class App:
     def generate_qr_code(self, reference_id, total_amount):
         headers = {
             'Content-Type': 'application/json',
-            'Authorization': 'Basic YXBpLXNtYXJ0bGluay1zYnhAcGV0cmEuYWMuaWQ6ZEhvRjBTMzJ2MFpCbVd2'
+            'Authorization': 'Basic xxyyzz'
         }
 
         items = []
@@ -2257,15 +2257,15 @@ class App:
             "description": "Order created via generate_qr_code",
             "customer": {
                 "name": "John",
-                "email": "john.doe@gmail.com",
-                "phone": "089798798686"
+                "email": "xxyyzz@gmail.com",
+                "phone": "089712345678"
             },
             "item": items,
             "channel": ["WALLET_QRIS"],
             "type": "payment-page",
             "payment_mode": "CLOSE",
             "expired_time": "",  # Set an actual expiration time if needed
-            "callback_url": "https://7425-203-189-122-12.ngrok-free.app/callback",
+            "callback_url": "https://.../callback",
             "success_redirect_url": "-",
             "failed_redirect_url": "-"
         }
