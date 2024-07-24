@@ -8,7 +8,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import requests
 import qrcode
 import base64
-from datetime import datetime
+from datetime import datetime, timedelta
 import datetime
 import uuid
 import csv
@@ -52,13 +52,13 @@ class DatabaseManager:
             self.conn.close()
             print("Disconnected from database.")
 
-    def insert_order(self, order_date, user_id, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan):
+    def insert_order(self, order_date, order_id, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan):
         query = """
         INSERT INTO ringkasan_pesanan 
-        (order_date, user_id, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan)
+        (order_date, order_id, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        values = (order_date, user_id, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan)
+        values = (order_date, order_id, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan)
         try:
             self.cursor.execute(query, values)
             self.conn.commit()
@@ -148,10 +148,12 @@ class App:
         self.cart_quantities = {}
         self.minuman_data = {}
         self.load_minuman_data()
-        self.current_user_id = None
-        self.previous_user_id = None
+        self.current_order_id = None
+        self.previous_order_id = None
         self.sales_data = []
         self.polling = False
+        self.root.bind("<Configure>", self.resize_plot)
+        self.chart_canvas = None
 
         self.sales_data_frame = None
         self.sales_table = None
@@ -321,8 +323,6 @@ class App:
             messagebox.showwarning("Warning", "Logout cancelled.")
 
     def verify_admin_password(self, password):
-        # Ganti dengan metode verifikasi password admin yang sesuai
-        # Misalnya, cek password dengan database
         self.db_manager.connect()
         self.db_manager.cursor.execute("SELECT password FROM users WHERE username = 'admin'")
         result = self.db_manager.cursor.fetchone()
@@ -883,7 +883,7 @@ class App:
         sales_chart_button = tk.Button(button_frame, text="Generate Sales Chart", command=self.generate_sales_chart, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         sales_chart_button.grid(row=0, column=5, padx=10)
 
-        columns = ("id", "order_date", "user_id", "nama_minuman", "pilihan_rasa", "persentase", "jumlah", "harga_satuan", "total_harga", "status_pembayaran", "status_pesanan")
+        columns = ("id", "order_date", "order_id", "nama_minuman", "pilihan_rasa", "persentase", "jumlah", "harga_satuan", "total_harga", "status_pembayaran", "status_pesanan")
         self.sales_table = ttk.Treeview(self.sales_data_frame, columns=columns, show="headings")
 
         for col in columns:
@@ -980,53 +980,116 @@ class App:
         title_label = tk.Label(self.sales_chart_frame, text="Sales Chart", font=("Helvetica", 24, "bold"), bg='lightblue')
         title_label.pack(pady=(50, 20))
 
-        chart_type_label = tk.Label(self.sales_chart_frame, text="Select Chart Type", font=("Helvetica", 16), bg='lightblue')
-        chart_type_label.pack(pady=10)
+        chart_options_frame = tk.Frame(self.sales_chart_frame, bg='lightblue')
+        chart_options_frame.pack(pady=(20, 10))
 
-        chart_type_var = tk.StringVar(value="daily")
+        daily_button = tk.Button(chart_options_frame, text="Daily", command=lambda: self.setup_date_range("daily"), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        daily_button.pack(side='left', padx=10)
 
-        daily_radio = tk.Radiobutton(self.sales_chart_frame, text="Daily", variable=chart_type_var, value="daily", bg='lightblue', font=("Helvetica", 14))
-        daily_radio.pack(pady=5)
-        monthly_radio = tk.Radiobutton(self.sales_chart_frame, text="Monthly", variable=chart_type_var, value="monthly", bg='lightblue', font=("Helvetica", 14))
-        monthly_radio.pack(pady=5)
-        yearly_radio = tk.Radiobutton(self.sales_chart_frame, text="Yearly", variable=chart_type_var, value="yearly", bg='lightblue', font=("Helvetica", 14))
-        yearly_radio.pack(pady=5)
+        monthly_button = tk.Button(chart_options_frame, text="Monthly", command=lambda: self.setup_date_range("monthly"), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        monthly_button.pack(side='left', padx=10)
 
-        generate_button = tk.Button(self.sales_chart_frame, text="Generate Chart", command=lambda: self.plot_sales_chart(chart_type_var.get()), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
-        generate_button.pack(pady=20)
+        yearly_button = tk.Button(chart_options_frame, text="Yearly", command=lambda: self.setup_date_range("yearly"), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        yearly_button.pack(side='left', padx=10)
 
-        back_button = tk.Button(self.sales_chart_frame, text="Back", command=self.view_sales_data, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
-        back_button.pack(pady=20)
+        self.setup_date_range("daily")
+
+        back_frame = tk.Frame(self.sales_chart_frame, bg='lightblue')
+        back_frame.pack(pady=20, side='bottom')
+
+        back_button = tk.Button(back_frame, text="Back", command=self.view_sales_data, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button.pack()
 
         self.last_frame = self.sales_chart_frame
 
-    def plot_sales_chart(self, chart_type):
-        self.destroy_last_frame()
+    def setup_date_range(self, chart_type):
+        if self.chart_canvas:
+            self.chart_canvas.get_tk_widget().destroy()
+        if hasattr(self, 'date_frame'):
+            self.date_frame.destroy()
 
-        self.sales_chart_plot_frame = tk.Frame(self.root, bg='lightblue')
-        self.sales_chart_plot_frame.pack(expand=True, fill='both')
+        self.date_frame = tk.Frame(self.sales_chart_frame, bg='lightblue')
+        self.date_frame.pack(pady=(10, 10))
 
-        title_label = tk.Label(self.sales_chart_plot_frame, text=f"{chart_type.capitalize()} Sales Chart", font=("Helvetica", 24, "bold"), bg='lightblue')
-        title_label.pack(pady=(50, 20))
+        today_date = datetime.datetime.now()
+
+        if chart_type == "daily":
+            start_date_label = tk.Label(self.date_frame, text="Start Date:", bg='lightblue', font=("Helvetica", 12))
+            start_date_label.pack(side='left', padx=5)
+
+            self.start_date_entry = DateEntry(self.date_frame, width=12, background='darkblue', foreground='white', borderwidth=2, mindate=today_date - timedelta(days=30), maxdate=today_date)
+            self.start_date_entry.set_date(today_date - timedelta(days=7))
+            self.start_date_entry.pack(side='left', padx=5)
+
+            end_date_label = tk.Label(self.date_frame, text="End Date:", bg='lightblue', font=("Helvetica", 12))
+            end_date_label.pack(side='left', padx=5)
+
+            self.end_date_entry = DateEntry(self.date_frame, width=12, background='darkblue', foreground='white', borderwidth=2, mindate=today_date - timedelta(days=30), maxdate=today_date)
+            self.end_date_entry.set_date(today_date)
+            self.end_date_entry.pack(side='left', padx=5)
+        elif chart_type == "monthly":
+            year_label = tk.Label(self.date_frame, text="Year:", bg='lightblue', font=("Helvetica", 12))
+            year_label.pack(side='left', padx=5)
+
+            self.year_entry = tk.Spinbox(self.date_frame, from_=today_date.year - 10, to=today_date.year, width=8, font=("Helvetica", 12))
+            self.year_entry.pack(side='left', padx=5)
+            self.year_entry.delete(0, "end")
+            self.year_entry.insert(0, today_date.year)
+        elif chart_type == "yearly":
+            start_year_label = tk.Label(self.date_frame, text="Start Year:", bg='lightblue', font=("Helvetica", 12))
+            start_year_label.pack(side='left', padx=5)
+
+            self.start_year_entry = tk.Spinbox(self.date_frame, from_=today_date.year - 10, to=today_date.year, width=8, font=("Helvetica", 12))
+            self.start_year_entry.pack(side='left', padx=5)
+            self.start_year_entry.delete(0, "end")
+            self.start_year_entry.insert(0, today_date.year - 5)
+
+            end_year_label = tk.Label(self.date_frame, text="End Year:", bg='lightblue', font=("Helvetica", 12))
+            end_year_label.pack(side='left', padx=5)
+
+            self.end_year_entry = tk.Spinbox(self.date_frame, from_=today_date.year - 10, to=today_date.year, width=8, font=("Helvetica", 12))
+            self.end_year_entry.pack(side='left', padx=5)
+            self.end_year_entry.delete(0, "end")
+            self.end_year_entry.insert(0, today_date.year)
+
+        generate_button = tk.Button(self.date_frame, text="Generate Chart", command=lambda: self.update_chart(chart_type), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        generate_button.pack(side='left', padx=10)
+
+        if chart_type == "daily":
+            self.update_chart("daily")
+        elif chart_type == "monthly":
+            self.update_chart("monthly")
+        elif chart_type == "yearly":
+            self.update_chart("yearly")
+
+    def update_chart(self, chart_type):
+        if self.chart_canvas:
+            self.chart_canvas.get_tk_widget().destroy()
 
         try:
             self.db_manager.connect()
+            
             if chart_type == "daily":
-                query = "SELECT DATE(order_date) AS date, COUNT(*) AS total_sales, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan GROUP BY DATE(order_date)"
+                start_date = self.start_date_entry.get_date()
+                end_date = self.end_date_entry.get_date()
             elif chart_type == "monthly":
-                query = "SELECT DATE_FORMAT(order_date, '%Y-%m') AS month, COUNT(*) AS total_sales, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan GROUP BY DATE_FORMAT(order_date, '%Y-%m')"
+                start_year = int(self.year_entry.get())
+                start_date = datetime.date(start_year, 1, 1)
+                end_date = datetime.date(start_year, 12, 31)
             elif chart_type == "yearly":
-                query = "SELECT YEAR(order_date) AS year, COUNT(*) AS total_sales, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan GROUP BY YEAR(order_date)"
+                start_year = int(self.start_year_entry.get())
+                end_year = int(self.end_year_entry.get())
+                start_date = datetime.date(start_year, 1, 1)
+                end_date = datetime.date(end_year, 12, 31)
 
+            query = self.get_query(chart_type, start_date, end_date)
             self.db_manager.cursor.execute(query)
             sales_data = self.db_manager.cursor.fetchall()
             self.db_manager.disconnect()
 
-            dates = [row[0] for row in sales_data]
-            total_sales = [row[1] for row in sales_data]
-            total_revenue = [row[2] for row in sales_data]
+            dates, total_sales, total_revenue = self.process_sales_data(sales_data, chart_type, start_date, end_date)
 
-            fig, ax1 = plt.subplots()
+            fig, ax1 = plt.subplots(figsize=(10, 6))
 
             color = 'tab:blue'
             ax1.set_xlabel(chart_type.capitalize())
@@ -1042,17 +1105,59 @@ class App:
 
             fig.tight_layout()
 
-            canvas = FigureCanvasTkAgg(fig, master=self.sales_chart_plot_frame)
-            canvas.draw()
-            canvas.get_tk_widget().pack(pady=20)
+            self.chart_canvas = FigureCanvasTkAgg(fig, master=self.sales_chart_frame)
+            self.chart_canvas.draw()
+            self.chart_canvas.get_tk_widget().pack(expand=True, fill='both')
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to generate sales chart: {e}")
 
-        back_button = tk.Button(self.sales_chart_plot_frame, text="Back", command=self.generate_sales_chart, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
-        back_button.pack(pady=20)
+    def get_query(self, report_type, start_date, end_date):
+        start_date_str = start_date.strftime('%Y-%m-%d')
+        end_date_str = end_date.strftime('%Y-%m-%d')
+        
+        if report_type == "daily":
+            return f"SELECT DATE(order_date) AS date, COUNT(*) AS total_sales, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan WHERE order_date BETWEEN '{start_date_str}' AND '{end_date_str}' GROUP BY DATE(order_date) ORDER BY date"
+        elif report_type == "monthly":
+            return f"SELECT DATE_FORMAT(order_date, '%Y-%m') AS month, COUNT(*) AS total_sales, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan WHERE order_date BETWEEN '{start_date_str}' AND '{end_date_str}' GROUP BY month ORDER BY month"
+        elif report_type == "yearly":
+            return f"SELECT YEAR(order_date) AS year, COUNT(*) AS total_sales, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan WHERE order_date BETWEEN '{start_date_str}' AND '{end_date_str}' GROUP BY year ORDER BY year"
 
-        self.last_frame = self.sales_chart_plot_frame
+
+    def process_sales_data(self, sales_data, chart_type, start_date, end_date):
+        if chart_type == "daily":
+            date_format = '%Y-%m-%d'
+            date_range = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
+        elif chart_type == "monthly":
+            date_format = '%Y-%m'
+            date_range = [start_date + timedelta(days=30 * i) for i in range(0, 12)]
+            date_range = [d.replace(day=1) for d in date_range]
+        elif chart_type == "yearly":
+            date_format = '%Y'
+            date_range = [start_date.replace(year=start_date.year + i) for i in range((end_date.year - start_date.year) + 1)]
+
+        date_str_range = [d.strftime(date_format) for d in date_range]
+        sales_dict = {d: 0 for d in date_str_range}
+        revenue_dict = {d: 0 for d in date_str_range}
+
+        for row in sales_data:
+            date_str, total_sales, total_revenue = row
+            sales_dict[str(date_str)] = total_sales
+            revenue_dict[str(date_str)] = total_revenue
+
+        dates = list(sales_dict.keys())
+        total_sales = list(sales_dict.values())
+        total_revenue = list(revenue_dict.values())
+
+        return dates, total_sales, total_revenue
+
+    def resize_plot(self, event):
+        if self.chart_canvas:
+            try:
+                self.chart_canvas.get_tk_widget().pack(expand=True, fill='both')
+            except:
+                # Handle the case where the widget no longer exists
+                self.chart_canvas = None
 
     # -----------------------------------------------------------Filter dan Pencarian---------------------------------------------------------------------
 
@@ -1182,7 +1287,7 @@ class App:
             self.db_manager.disconnect()
 
             # Konversi data ke DataFrame pandas
-            columns = ["id", "order_date", "user_id", "nama_minuman", "pilihan_rasa", "persentase", "jumlah", "harga_satuan", "total_harga", "status_pembayaran", "status_pesanan"]
+            columns = ["id", "order_date", "order_id", "nama_minuman", "pilihan_rasa", "persentase", "jumlah", "harga_satuan", "total_harga", "status_pembayaran", "status_pesanan"]
             df = pd.DataFrame(sales_data, columns=columns)
 
             # Pilih lokasi dan nama file untuk menyimpan data
@@ -1209,51 +1314,90 @@ class App:
         title_label = tk.Label(self.statistics_frame, text="Sales Statistics", font=("Helvetica", 24, "bold"), bg='lightblue')
         title_label.pack(pady=(50, 20))
 
+        chart_options_frame = tk.Frame(self.statistics_frame, bg='lightblue')
+        chart_options_frame.pack(pady=(20, 10))
+
+        daily_button = tk.Button(chart_options_frame, text="Daily", command=lambda: self.show_statistics("daily"), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        daily_button.pack(side='left', padx=10)
+
+        weekly_button = tk.Button(chart_options_frame, text="Weekly", command=lambda: self.show_statistics("weekly"), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        weekly_button.pack(side='left', padx=10)
+
+        monthly_button = tk.Button(chart_options_frame, text="Monthly", command=lambda: self.show_statistics("monthly"), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        monthly_button.pack(side='left', padx=10)
+
+        yearly_button = tk.Button(chart_options_frame, text="Yearly", command=lambda: self.show_statistics("yearly"), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        yearly_button.pack(side='left', padx=10)
+
+        self.show_statistics("daily")
+
+        back_frame = tk.Frame(self.statistics_frame, bg='lightblue')
+        back_frame.pack(pady=20, side='bottom')
+
+        back_button = tk.Button(back_frame, text="Back", command=self.view_sales_data, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button.pack()
+
+        self.last_frame = self.statistics_frame
+
+    def show_statistics(self, stat_type):
+        if hasattr(self, 'stats_content_frame'):
+            self.stats_content_frame.destroy()
+
+        self.stats_content_frame = tk.Frame(self.statistics_frame, bg='lightblue')
+        self.stats_content_frame.pack(expand=True, fill='both')
+
         try:
             self.db_manager.connect()
-            query = "SELECT COUNT(*) AS total_orders, SUM(jumlah) AS total_items_sold, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan"
+
+            if stat_type == "daily":
+                query = "SELECT DATE(order_date) AS date, COUNT(*) AS total_orders, SUM(jumlah) AS total_items_sold, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan GROUP BY DATE(order_date) ORDER BY date DESC LIMIT 7"
+                title = "Daily Statistics (Last 7 Days)"
+            elif stat_type == "weekly":
+                query = "SELECT DATE_FORMAT(order_date, '%Y-%u') AS week, COUNT(*) AS total_orders, SUM(jumlah) AS total_items_sold, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan GROUP BY week ORDER BY week DESC LIMIT 4"
+                title = "Weekly Statistics (Last 4 Weeks)"
+            elif stat_type == "monthly":
+                query = "SELECT DATE_FORMAT(order_date, '%Y-%m') AS month, COUNT(*) AS total_orders, SUM(jumlah) AS total_items_sold, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan GROUP BY month ORDER BY month DESC LIMIT 12"
+                title = "Monthly Statistics (Last 12 Months)"
+            elif stat_type == "yearly":
+                query = "SELECT DATE_FORMAT(order_date, '%Y') AS year, COUNT(*) AS total_orders, SUM(jumlah) AS total_items_sold, SUM(total_harga) AS total_revenue FROM ringkasan_pesanan GROUP BY year ORDER BY year DESC LIMIT 5"
+                title = "Yearly Statistics (Last 5 Years)"
+            
             self.db_manager.cursor.execute(query)
-            statistics = self.db_manager.cursor.fetchone()
+            statistics = self.db_manager.cursor.fetchall()
+
             self.db_manager.disconnect()
 
-            total_orders_label = tk.Label(self.statistics_frame, text=f"Total Orders: {statistics[0]}", font=("Helvetica", 16), bg='lightblue')
-            total_orders_label.pack(pady=5)
+            title_label = tk.Label(self.stats_content_frame, text=title, font=("Helvetica", 18, "bold"), bg='lightblue')
+            title_label.pack(pady=10)
 
-            total_items_sold_label = tk.Label(self.statistics_frame, text=f"Total Items Sold: {statistics[1]}", font=("Helvetica", 16), bg='lightblue')
-            total_items_sold_label.pack(pady=5)
-
-            total_revenue_label = tk.Label(self.statistics_frame, text=f"Total Revenue: {self.format_price(statistics[2])}", font=("Helvetica", 16), bg='lightblue')
-            total_revenue_label.pack(pady=5)
+            for stat in statistics:
+                stat_label = tk.Label(self.stats_content_frame, text=f"{stat[0]} - Orders: {stat[1]}, Items Sold: {stat[2]}, Revenue: {self.format_price(stat[3])}", font=("Helvetica", 14), bg='lightblue')
+                stat_label.pack(pady=2)
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to retrieve statistics: {e}")
 
-        back_button = tk.Button(self.statistics_frame, text="Back", command=self.create_admin_page, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
-        back_button.pack(pady=20)
-
-        self.last_frame = self.statistics_frame
-
     # -----------------------------------------------------------USER---------------------------------------------------------------------
     def create_order_for_user(self):
-        # Generate a new user ID
-        user_id = str(uuid.uuid4())
-        self.show_order_page(user_id)
+        # Generate a new Order ID
+        order_id = str(uuid.uuid4())
+        self.show_order_page(order_id)
 
-    def show_order_page(self, user_id):
-        if user_id is None:
-            raise ValueError("User ID must not be None")
+    def show_order_page(self, order_id):
+        if order_id is None:
+            raise ValueError("Order ID must not be None")
 
-        print("User ID:", user_id)
+        print("Order ID:", order_id)
 
         self.destroy_last_frame()
 
-        self.current_user_id = user_id  # Set the current user ID
+        self.current_order_id = order_id  # Set the current Order ID
 
         # Reset item quantities only if the user is different
-        if getattr(self, 'previous_user_id', None) != user_id:
+        if getattr(self, 'previous_order_id', None) != order_id:
             self.reset_all_item_quantities()
 
-        self.previous_user_id = user_id
+        self.previous_order_id = order_id
 
         self.order_frame_container = tk.Frame(self.root, bg='lightblue')
         self.order_frame_container.pack(expand=True, fill='both')
@@ -1262,8 +1406,8 @@ class App:
         title_label.pack(pady=40)
 
         # Tampilkan ID pengguna
-        user_id_label = tk.Label(self.order_frame_container, text=f"User ID: {user_id}", font=("Helvetica", 12), bg='lightblue')
-        user_id_label.place(x=20, y=20)
+        order_id_label = tk.Label(self.order_frame_container, text=f"Order ID: {order_id}", font=("Helvetica", 12), bg='lightblue')
+        order_id_label.place(x=20, y=20)
 
         content_frame = tk.Frame(self.order_frame_container, bg='lightblue')
         content_frame.pack(expand=True, fill='both')
@@ -1393,7 +1537,7 @@ class App:
 
             # Update order
             if nama_minuman == "Sirup Dua Rasa":
-                self.show_rasa_selection(self.current_user_id)
+                self.show_rasa_selection(self.current_order_id)
             else:
                 if nama_minuman not in self.order:
                     self.order[nama_minuman] = [{'quantity': 1, 'variants': []}]
@@ -1594,7 +1738,7 @@ class App:
     def confirm_cart(self):
         if hasattr(self, 'cart_window') and self.cart_window.winfo_exists():
             self.cart_window.destroy()
-        self.show_order_page(self.current_user_id)
+        self.show_order_page(self.current_order_id)
 
     def get_rasa_options(self):
         self.db_manager.connect()
@@ -1636,7 +1780,7 @@ class App:
             else:
                 self.counts[item_key] = tk.Label(self.root, text=str(total_quantity))
 
-        self.show_order_page(self.current_user_id)
+        self.show_order_page(self.current_order_id)
 
     def decrement_quantity(self):
         current_quantity = self.quantity_var.get()
@@ -1647,11 +1791,11 @@ class App:
         current_quantity = self.quantity_var.get()
         self.quantity_var.set(current_quantity + 1)
 
-    def show_rasa_selection(self, user_id):
-        if user_id is None:
-            raise ValueError("User ID must not be None")
+    def show_rasa_selection(self, order_id):
+        if order_id is None:
+            raise ValueError("Order ID must not be None")
 
-        print("User ID:", user_id)
+        print("Order ID:", order_id)
         self.destroy_last_frame()
 
         rasa_selection_frame = tk.Frame(self.root, bg='lightblue')
@@ -1660,8 +1804,8 @@ class App:
         title_label = tk.Label(rasa_selection_frame, text="Pilih Rasa untuk Sirup Dua Rasa", font=("Helvetica", 24, "bold"), bg='lightblue')
         title_label.pack(pady=20)
 
-        user_id_label = tk.Label(rasa_selection_frame, text=f"User ID: {user_id}", font=("Helvetica", 12), bg='lightblue')
-        user_id_label.place(x=20, y=20)
+        order_id_label = tk.Label(rasa_selection_frame, text=f"Order ID: {order_id}", font=("Helvetica", 12), bg='lightblue')
+        order_id_label.place(x=20, y=20)
 
         self.rasa_var1 = tk.StringVar()
         self.rasa_var2 = tk.StringVar()
@@ -1724,7 +1868,7 @@ class App:
         add_button = tk.Button(rasa_selection_frame, text="Add to Cart", command=self.add_to_cart, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         add_button.pack(pady=20)
 
-        back_button = tk.Button(rasa_selection_frame, text="Back", command=lambda: self.show_order_page(self.current_user_id), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button = tk.Button(rasa_selection_frame, text="Back", command=lambda: self.show_order_page(self.current_order_id), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         back_button.pack(pady=20)
 
         self.last_frame = rasa_selection_frame
@@ -1740,10 +1884,10 @@ class App:
         # If order is not empty, process it
         if self.order:
             # Show order page after adding order
-            self.show_order_page(self.current_user_id)
+            self.show_order_page(self.current_order_id)
         else:
             # If order is empty, directly go back to show_order_page
-            self.show_order_page(self.current_user_id)
+            self.show_order_page(self.current_order_id)
 
     def update_order_from_counts(self):
         for item, quantity_label in list(self.counts.items()):
@@ -1804,17 +1948,17 @@ class App:
                 self.order[item] = {'quantity': quantity, 'rasa': [pilihan_rasa], 'persentase': [persentase_var]}
 
         # Lanjutkan dengan menampilkan ringkasan pesanan
-        self.show_order_summary(self.current_user_id)
+        self.show_order_summary(self.current_order_id)
 
     def go_back_to_welcome_page(self):
         self.destroy_last_frame()
         self.create_user_welcome_page()
 
-    def show_order_summary(self, user_id):
-        if user_id is None:
-            raise ValueError("User ID must not be None")
+    def show_order_summary(self, order_id):
+        if order_id is None:
+            raise ValueError("Order ID must not be None")
 
-        print("User ID:", user_id)
+        print("Order ID:", order_id)
         self.destroy_last_frame()
 
         self.order_summary_frame = tk.Frame(self.root, bg='lightblue')
@@ -1823,8 +1967,8 @@ class App:
         summary_label = tk.Label(self.order_summary_frame, text="ORDER SUMMARY", font=("Helvetica", 24, "bold"), bg='lightblue')
         summary_label.pack(pady=(40, 20), padx=20)
 
-        user_id_label = tk.Label(self.order_summary_frame, text=f"User ID: {user_id}", font=("Helvetica", 12), bg='lightblue')
-        user_id_label.place(x=20, y=20)
+        order_id_label = tk.Label(self.order_summary_frame, text=f"Order ID: {order_id}", font=("Helvetica", 12), bg='lightblue')
+        order_id_label.place(x=20, y=20)
 
         content_frame = tk.Frame(self.order_summary_frame, bg='lightblue')
         content_frame.pack(expand=True, fill='both', padx=20, pady=(0, 20))
@@ -1954,7 +2098,7 @@ class App:
         if confirmation:
             try:
                 del self.order[nama_minuman]
-                self.show_order_summary(self.current_user_id)
+                self.show_order_summary(self.current_order_id)
             except KeyError as e:
                 print(f"Error deleting order: {e}")
 
@@ -1970,7 +2114,7 @@ class App:
                                     self.order[nama_minuman].remove(details)
                                 if not self.order[nama_minuman]:
                                     del self.order[nama_minuman]
-                                self.show_order_summary(self.current_user_id)
+                                self.show_order_summary(self.current_order_id)
                                 return
                 else:
                     details['quantity'] += delta
@@ -1978,9 +2122,9 @@ class App:
                         self.order[nama_minuman].remove(details)
                     if not self.order[nama_minuman]:
                         del self.order[nama_minuman]
-                    self.show_order_summary(self.current_user_id)
+                    self.show_order_summary(self.current_order_id)
                     return
-        self.show_order_summary(self.current_user_id)
+        self.show_order_summary(self.current_order_id)
 
     def update_counts_from_order(self):
         for item, details_list in self.order.items():
@@ -2017,7 +2161,7 @@ class App:
                         persentase = ''
 
                 self.order_details.append({
-                    'user_id': self.current_user_id,
+                    'order_id': self.current_order_id,
                     'nama_minuman': nama_minuman,
                     'quantity': quantity,
                     'total_price': total_harga,
@@ -2039,7 +2183,7 @@ class App:
         formatted_price = self.format_price(total_amount)
         print("Formatted Price:", formatted_price)  # Debug print
 
-        reference_id = f"{self.current_user_id}"  # Generate reference_id based on user_id
+        reference_id = f"{self.current_order_id}"  # Generate reference_id based on order_id
 
         confirmation = messagebox.askyesno("Confirmation", f"The total amount to be paid is {formatted_price}. Do you want to proceed and generate the QR code?")
 
@@ -2051,21 +2195,25 @@ class App:
                 # Save all orders to the database with status_pembayaran = 0 (not paid)
                 for order_detail in self.order_details:
                     order_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    user_id = order_detail['user_id']
+                    order_id = order_detail['order_id']
                     nama_minuman = order_detail['nama_minuman']
-                    pilihan_rasa = ', '.join(order_detail.get('rasa', [])) if 'Sirup Dua Rasa' in nama_minuman else ''
-                    persentase = order_detail.get('persentase', '') if 'Sirup Dua Rasa' in nama_minuman else ''
+                    if 'Sirup Dua Rasa' in nama_minuman:
+                        pilihan_rasa = ', '.join(order_detail.get('rasa', []))
+                        persentase = order_detail.get('persentase', '100%')
+                    else:
+                        pilihan_rasa = nama_minuman
+                        persentase = '100%'
                     jumlah = order_detail['quantity']
                     harga_satuan = self.menu_items[nama_minuman]['harga']
                     total_harga = order_detail['total_price']
                     status_pembayaran = 0  # Set status_pembayaran to 0 initially
                     status_pesanan = 'Completed'  # status_pesanan: Completed
 
-                    print(f"Inserting order: {order_date}, {user_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
+                    print(f"Inserting order: {order_date}, {order_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
 
                     self.db_manager.insert_order(
                         order_date,
-                        user_id,
+                        order_id,
                         nama_minuman,
                         pilihan_rasa,
                         persentase,
@@ -2117,7 +2265,7 @@ class App:
             "type": "payment-page",
             "payment_mode": "CLOSE",
             "expired_time": "",  # Set an actual expiration time if needed
-            "callback_url": "https://880a-203-189-122-12.ngrok-free.app/callback",
+            "callback_url": "https://7425-203-189-122-12.ngrok-free.app/callback",
             "success_redirect_url": "-",
             "failed_redirect_url": "-"
         }
@@ -2156,10 +2304,10 @@ class App:
             messagebox.showerror("Error", f"Failed to generate QR code: {str(e)}")
 
     def show_payment_page(self, payment_url):
-        if self.current_user_id is None:
-            raise ValueError("User ID must not be None")
+        if self.current_order_id is None:
+            raise ValueError("Order ID must not be None")
 
-        print("User ID:", self.current_user_id)
+        print("Order ID:", self.current_order_id)
         print("Payment URL:", payment_url)
 
         self.destroy_last_frame()
@@ -2170,8 +2318,8 @@ class App:
         payment_label = tk.Label(payment_page_frame, text="PAYMENT PAGE", font=("Helvetica", 24, "bold"), bg='lightblue')
         payment_label.pack(pady=(80, 30), padx=20)
 
-        user_id_label = tk.Label(payment_page_frame, text=f"User ID: {self.current_user_id}", font=("Helvetica", 12), bg='lightblue')
-        user_id_label.place(x=20, y=20)
+        order_id_label = tk.Label(payment_page_frame, text=f"Order ID: {self.current_order_id}", font=("Helvetica", 12), bg='lightblue')
+        order_id_label.place(x=20, y=20)
 
         qr = qrcode.QRCode(
             version=1,
@@ -2242,7 +2390,7 @@ class App:
         self.polling = False
         self.root.destroy()
 
-    # def confirm_payment_and_order(self, user_id):
+    # def confirm_payment_and_order(self, order_id):
     #     try:
     #         self.db_manager.connect()
     #         self.populate_order_details()
@@ -2267,12 +2415,12 @@ class App:
     #                 status_pembayaran = 1  # Set status_pembayaran to 1 after successful payment
     #                 status_pesanan = 'Completed'  # status_pesanan: Completed
 
-    #                 print(f"Updating order payment status: {order_date}, {user_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
+    #                 print(f"Updating order payment status: {order_date}, {order_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
 
     #                 # Update the order in the database with the new payment status
     #                 self.db_manager.update_order_payment_status(
     #                     order_date,
-    #                     user_id,
+    #                     order_id,
     #                     nama_minuman,
     #                     pilihan_rasa,
     #                     persentase,
@@ -2299,8 +2447,8 @@ class App:
     #     try:
     #         start_time = time.time()
     #         for order_detail in order_details:
-    #             if order_detail['user_id'] != self.current_user_id:
-    #                 continue  # Skip this order if it doesn't match the current user_id
+    #             if order_detail['order_id'] != self.current_order_id:
+    #                 continue  # Skip this order if it doesn't match the current order_id
 
     #             nama_minuman = order_detail['nama_minuman']
     #             pilihan_rasa = ', '.join(order_detail.get('rasa', []))
