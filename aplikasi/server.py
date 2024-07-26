@@ -3,13 +3,15 @@ import hashlib
 import mysql.connector
 from bs4 import BeautifulSoup
 import logging
+from pyngrok import ngrok
 
 app = Flask(__name__)
 
 # Email credential yang digunakan untuk verifikasi signature
-EMAIL_CREDENTIAL = "xxyyzz"
+EMAIL_CREDENTIAL = "api-smartlink-sbx@petra.ac.id"
 
 payment_statuses = {}
+ngrok_url = None  # Variable to store the ngrok URL
 
 class DatabaseManager:
     def __init__(self, host, port, username, password, database):
@@ -139,6 +141,16 @@ def extract_qris_code():
     svg_content = str(svg_element)
     return svg_content
 
+@app.route('/get_ngrok_url', methods=['GET'])
+def get_ngrok_url():
+    return jsonify({"ngrok_url": ngrok_url})
+
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
+
+    # Menjalankan ngrok
+    http_tunnel = ngrok.connect(7000)
+    ngrok_url = http_tunnel.public_url
+    logging.info(f" * ngrok tunnel \"{http_tunnel}\" -> \"http://127.0.0.1:7000\"")
+
     app.run(port=7000)
