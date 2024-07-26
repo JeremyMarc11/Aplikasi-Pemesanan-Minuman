@@ -2253,7 +2253,7 @@ class App:
     def generate_qr_code(self, reference_id, total_amount, ngrok_url):
         headers = {
             'Content-Type': 'application/json',
-            'Authorization': 'Basic YXBpLXNtYXJ0bGluay1zYnhAcGV0cmEuYWMuaWQ6ZEhvRjBTMzJ2MFpCbVd2'
+            'Authorization': 'Basic xxyyzz'
         }
 
         items = []
@@ -2435,7 +2435,7 @@ class App:
     #                 print(f"Updating order payment status: {order_date}, {user_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
 
     #                 # Update the order in the database with the new payment status
-    #                 self.db_manager.update_order_payment_status(
+    #                 self.db_manager.insert_order(
     #                     order_date,
     #                     user_id,
     #                     nama_minuman,
