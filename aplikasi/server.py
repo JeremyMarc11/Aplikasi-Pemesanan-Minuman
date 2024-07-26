@@ -8,7 +8,7 @@ from pyngrok import ngrok
 app = Flask(__name__)
 
 # Email credential yang digunakan untuk verifikasi signature
-EMAIL_CREDENTIAL = "api-smartlink-sbx@petra.ac.id"
+EMAIL_CREDENTIAL = "xxyyzz"
 
 payment_statuses = {}
 ngrok_url = None  # Variable to store the ngrok URL
