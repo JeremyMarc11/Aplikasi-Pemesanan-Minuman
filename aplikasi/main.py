@@ -141,7 +141,7 @@ class App:
         self.rasa_var1 = tk.StringVar()
         self.rasa_var2 = tk.StringVar()
         self.persentase_var = tk.StringVar()
-        self.db_manager = DatabaseManager('127.0.0.1', 3306, 'root', '', 'pemesanan_minuman')
+        self.db_manager = DatabaseManager('127.0.0.1', 3306, 'root', 'admin', 'pemesanan_minuman')
         self.total_price = 0
         self.user_logged_in = False
         self.admin_logged_in = False
@@ -149,12 +149,13 @@ class App:
         self.cart_quantities = {}
         self.minuman_data = {}
         self.load_minuman_data()
-        self.current_user_id = None
-        self.previous_user_id = None
+        self.current_order_id = None
+        self.previous_order_id = None
         self.sales_data = []
         self.polling = False
         self.root.bind("<Configure>", self.resize_plot)
         self.chart_canvas = None
+        self.current_order_id = 1 
 
         self.sales_data_frame = None
         self.sales_table = None
@@ -229,7 +230,7 @@ class App:
         self.password_entry.insert(0, "user123")
         self.password_entry.pack(pady=10)
 
-        login_button = tk.Button(self.login_frame, text="LOGIN", command=self.login, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        login_button = tk.Button(self.login_frame, text="LOGIN", command=self.login, bg='orange', font=("Helvetica", 24, "bold"), padx=10, pady=5, width=15, height=2)
         login_button.pack(pady=20)
 
         self.last_frame = self.login_frame
@@ -269,7 +270,7 @@ class App:
             welcome_label = tk.Label(self.user_welcome_frame, text="WELCOME", font=("Helvetica", 30, "bold"), bg='lightblue')
             welcome_label.pack(pady=(300, 20))
 
-            order_button = tk.Button(self.user_welcome_frame, text="ORDER NOW", command=self.create_order_for_user, bg='orange', font=("Helvetica", 20, "bold"), padx=10, pady=5)
+            order_button = tk.Button(self.user_welcome_frame, text="ORDER NOW", command=self.create_order_for_user, bg='orange', font=("Helvetica", 24, "bold"), padx=10, pady=5, width=15, height=2)
             order_button.pack(pady=20)
             
             logout_image = tk.PhotoImage(file="assets/logout.png")
@@ -294,7 +295,7 @@ class App:
             welcome_label = tk.Label(self.admin_welcome_frame, text="WELCOME ADMIN", font=("Helvetica", 30, "bold"), bg='lightblue')
             welcome_label.pack(pady=(300, 20))
 
-            enter_button = tk.Button(self.admin_welcome_frame, text="ENTER", command=self.create_admin_page, bg='orange', font=("Helvetica", 20, "bold"), padx=10, pady=5)
+            enter_button = tk.Button(self.admin_welcome_frame, text="ENTER", command=self.create_admin_page, bg='orange', font=("Helvetica", 24, "bold"), padx=10, pady=5, width=15, height=2)
             enter_button.pack(pady=20)
 
             logout_image = tk.PhotoImage(file="assets/logout.png")
@@ -586,17 +587,15 @@ class App:
 
                 # Format harga
                 formatted_price = self.format_price(harga)
-                label_text = f"{nama_minuman}\n{formatted_price}"  # Combine nama_minuman and harga into a single text
+                label_text = f"{nama_minuman}\nRp {formatted_price}"  # Combine nama_minuman and harga into a single text
                 label = tk.Label(item_frame, text=label_text, font=("Helvetica", 14), bg='lightblue')
                 label.pack(pady=(10, 0))
 
                 # Create delete button for each menu item
-                delete_button = tk.Button(item_frame, text="Delete", command=lambda nm=nama_minuman: self.delete_selected_menu(nm), bg='red',
-                                          font=("Helvetica", 12, "bold"), padx=10, pady=5)
+                delete_button = tk.Button(item_frame, text="Delete", command=lambda nm=nama_minuman: self.delete_selected_menu(nm), bg='red', font=("Helvetica", 12, "bold"), padx=10, pady=5)
                 delete_button.pack(pady=10)
 
-        back_button = tk.Button(delete_menu_frame, text="Back", command=self.create_admin_page, bg='orange',
-                                font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button = tk.Button(delete_menu_frame, text="Back", command=self.create_admin_page, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         back_button.pack(pady=20)
 
         # Set last frame
@@ -670,10 +669,10 @@ class App:
 
                 try:
                     image = Image.open(io.BytesIO(gambar_minuman))
-                    image = image.resize((200, 200))  # Adjust size as needed
+                    image = image.resize((280, 280))  # Adjust size as needed
                     photo = ImageTk.PhotoImage(image)
-                    canvas = tk.Canvas(item_frame, width=250, height=250, bg='lightblue', highlightthickness=0)  # Adjust canvas size and highlightthickness as needed
-                    canvas.create_image(125, 125, image=photo)  # Center the image horizontally and vertically
+                    canvas = tk.Canvas(item_frame, width=330, height=330, bg='lightblue', highlightthickness=0)  # Adjust canvas size and highlightthickness as needed
+                    canvas.create_image(165, 165, image=photo)  # Center the image horizontally and vertically
                     canvas.image = photo
                     canvas.bind("<Button-1>", lambda event, nm=nama_minuman, h=harga, d=deskripsi: on_image_click(nm, h, d))
                     canvas.pack()
@@ -752,7 +751,7 @@ class App:
         description_text.pack(padx=20, pady=(0, 20), fill="both", expand=True)
 
         # Add button to save the edited description to the database
-        save_button = tk.Button(popup_window, text="Simpan", command=lambda: self.save_description_to_database(nama_minuman, description_text.get("1.0", "end-1c")), font=("Helvetica", 12, "bold"), bg="#32CD32", fg="white", padx=10, pady=5)
+        save_button = tk.Button(popup_window, text="Save", command=lambda: self.save_description_to_database(nama_minuman, description_text.get("1.0", "end-1c")), font=("Helvetica", 12, "bold"), bg="#32CD32", fg="white", padx=10, pady=5)
         save_button.pack(pady=10)
 
         # Add button to close the popup with attractive design
@@ -884,7 +883,7 @@ class App:
         sales_chart_button = tk.Button(button_frame, text="Generate Sales Chart", command=self.generate_sales_chart, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         sales_chart_button.grid(row=0, column=5, padx=10)
 
-        columns = ("id", "order_date", "user_id", "nama_minuman", "pilihan_rasa", "persentase", "jumlah", "harga_satuan", "total_harga", "status_pembayaran", "status_pesanan")
+        columns = ("id", "order_date", "order_id", "nama_minuman", "pilihan_rasa", "persentase", "jumlah", "harga_satuan", "total_harga", "status_pembayaran", "status_pesanan")
         self.sales_table = ttk.Treeview(self.sales_data_frame, columns=columns, show="headings")
 
         for col in columns:
@@ -1288,7 +1287,7 @@ class App:
             self.db_manager.disconnect()
 
             # Konversi data ke DataFrame pandas
-            columns = ["id", "order_date", "user_id", "nama_minuman", "pilihan_rasa", "persentase", "jumlah", "harga_satuan", "total_harga", "status_pembayaran", "status_pesanan"]
+            columns = ["id", "order_date", "order_id", "nama_minuman", "pilihan_rasa", "persentase", "jumlah", "harga_satuan", "total_harga", "status_pembayaran", "status_pesanan"]
             df = pd.DataFrame(sales_data, columns=columns)
 
             # Pilih lokasi dan nama file untuk menyimpan data
@@ -1380,25 +1379,25 @@ class App:
 
     # -----------------------------------------------------------USER---------------------------------------------------------------------
     def create_order_for_user(self):
-        # Generate a new User ID
-        user_id = str(uuid.uuid4())
-        self.show_order_page(user_id)
+        # Generate a new Order ID
+        order_id = str(uuid.uuid4())
+        self.show_order_page(order_id)
 
-    def show_order_page(self, user_id):
-        if user_id is None:
-            raise ValueError("User ID must not be None")
+    def show_order_page(self, order_id):
+        if order_id is None:
+            raise ValueError("Order ID must not be None")
 
-        print("User ID:", user_id)
+        print("Order ID:", order_id)
 
         self.destroy_last_frame()
 
-        self.current_user_id = user_id  # Set the current User ID
+        self.current_order_id = order_id  # Set the current Order ID
 
         # Reset item quantities only if the user is different
-        if getattr(self, 'previous_user_id', None) != user_id:
+        if getattr(self, 'previous_order_id', None) != order_id:
             self.reset_all_item_quantities()
 
-        self.previous_user_id = user_id
+        self.previous_order_id = order_id
 
         self.order_frame_container = tk.Frame(self.root, bg='lightblue')
         self.order_frame_container.pack(expand=True, fill='both')
@@ -1407,8 +1406,8 @@ class App:
         title_label.pack(pady=40)
 
         # Tampilkan ID pengguna
-        user_id_label = tk.Label(self.order_frame_container, text=f"User ID: {user_id}", font=("Helvetica", 12), bg='lightblue')
-        user_id_label.place(x=20, y=20)
+        order_id_label = tk.Label(self.order_frame_container, text=f"Order ID: {order_id}", font=("Helvetica", 12), bg='lightblue')
+        order_id_label.place(x=20, y=20)
 
         content_frame = tk.Frame(self.order_frame_container, bg='lightblue')
         content_frame.pack(expand=True, fill='both')
@@ -1437,11 +1436,11 @@ class App:
 
                 try:
                     image = Image.open(io.BytesIO(gambar_minuman))
-                    image = image.resize((200, 200))
+                    image = image.resize((280, 280))
                     photo = ImageTk.PhotoImage(image)
 
-                    canvas = tk.Canvas(item_frame, width=250, height=250, bg='lightblue', highlightthickness=0)
-                    canvas.create_image(125, 125, image=photo)
+                    canvas = tk.Canvas(item_frame, width=330, height=330, bg='lightblue', highlightthickness=0)
+                    canvas.create_image(165, 165, image=photo)
                     canvas.image = photo  # Simpan referensi agar gambar tidak terhapus
                     canvas.bind("<Button-1>", lambda event, nama_minuman=nama_minuman, harga=harga, deskripsi=deskripsi: on_image_click(nama_minuman, harga, deskripsi))
                     canvas.pack()
@@ -1458,7 +1457,7 @@ class App:
                 button_frame = tk.Frame(item_frame, bg='lightblue')
                 button_frame.pack()
 
-                plus_button = tk.Button(button_frame, text="+", font=("Helvetica", 14), command=self.create_increment_function(nama_minuman))
+                plus_button = tk.Button(button_frame, text="+", font=("Helvetica", 20), command=self.create_increment_function(nama_minuman))
                 plus_button.pack(side="right", padx=5, pady=5)
 
                 quantity = 0
@@ -1469,7 +1468,7 @@ class App:
                 quantity_label.pack(side="right", padx=10, pady=5)
                 self.counts[nama_minuman] = quantity_label
 
-                minus_button = tk.Button(button_frame, text="-", font=("Helvetica", 14), command=self.create_decrement_function(nama_minuman))
+                minus_button = tk.Button(button_frame, text="-", font=("Helvetica", 20), command=self.create_decrement_function(nama_minuman))
                 minus_button.pack(side="right", padx=5, pady=5)
 
                 self.menu_items[nama_minuman] = {'harga': harga, 'gambar': gambar_minuman}
@@ -1485,10 +1484,10 @@ class App:
         for i in range(5):
             self.cart_frame.grid_columnconfigure(i, weight=1)
 
-        self.order_button = tk.Button(self.cart_frame, text="Order", command=self.process_order, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        self.order_button = tk.Button(self.cart_frame, text="Order", command=self.process_order, bg='green', font=("Helvetica", 24, "bold"), padx=10, pady=5, width=15, height=2)
         self.order_button.grid(row=0, column=3, padx=(0, 40), pady=(0, 30), sticky="e")
 
-        self.back_button = tk.Button(self.cart_frame, text="Back", command=self.go_back_to_welcome_page, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        self.back_button = tk.Button(self.cart_frame, text="Back", command=self.go_back_to_welcome_page, bg='orange', font=("Helvetica", 24, "bold"), padx=10, pady=5, width=15, height=2)
         self.back_button.grid(row=1, column=3, padx=(0, 40), pady=(0, 30), sticky="e")
 
         cart_image = tk.PhotoImage(file="assets/cart.png")
@@ -1508,7 +1507,7 @@ class App:
         for i in range(4):
             self.cart_frame.grid_columnconfigure(i, weight=1)
 
-        item_frame_width = 250
+        item_frame_width = 300
         self.cart_frame.grid_columnconfigure(4, minsize=item_frame_width)
         self.cart_frame.grid_columnconfigure(5, minsize=item_frame_width)
 
@@ -1538,7 +1537,7 @@ class App:
 
             # Update order
             if nama_minuman == "Sirup Dua Rasa":
-                self.show_rasa_selection(self.current_user_id)
+                self.show_rasa_selection(self.current_order_id)
             else:
                 if nama_minuman not in self.order:
                     self.order[nama_minuman] = [{'quantity': 1, 'variants': []}]
@@ -1674,13 +1673,13 @@ class App:
                 quantity_frame = tk.Frame(details_frame, bg='white')
                 quantity_frame.pack(anchor='w')
 
-                minus_button = tk.Button(quantity_frame, text="-", command=lambda n=nama_minuman, r=variants[0]['rasas'] if variants else [], p=variants[0]['persentase'] if variants else 0: self.update_quantity_cart(n, r, p, -1), bg='red', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+                minus_button = tk.Button(quantity_frame, text="-", command=lambda n=nama_minuman, r=variants[0]['rasas'] if variants else [], p=variants[0]['persentase'] if variants else 0: self.update_quantity_cart(n, r, p, -1), bg='red', font=("Helvetica", 20, "bold"), padx=5, pady=5)
                 minus_button.pack(side='left', padx=(0, 5))
 
-                quantity_label = tk.Label(quantity_frame, text=str(quantity), font=("Helvetica", 12), bg='white')
+                quantity_label = tk.Label(quantity_frame, text=str(quantity), font=("Helvetica", 20), bg='white')
                 quantity_label.pack(side='left', padx=(5, 5))
 
-                plus_button = tk.Button(quantity_frame, text="+", command=lambda n=nama_minuman, r=variants[0]['rasas'] if variants else [], p=variants[0]['persentase'] if variants else 0: self.update_quantity_cart(n, r, p, 1), bg='green', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+                plus_button = tk.Button(quantity_frame, text="+", command=lambda n=nama_minuman, r=variants[0]['rasas'] if variants else [], p=variants[0]['persentase'] if variants else 0: self.update_quantity_cart(n, r, p, 1), bg='green', font=("Helvetica", 20, "bold"), padx=5, pady=5)
                 plus_button.pack(side='left', padx=(5, 0))
 
                 harga_label = tk.Label(details_frame, text=f"Harga Satuan: {self.format_price(harga_satuan)}", font=("Helvetica", 12), bg='white')
@@ -1704,7 +1703,7 @@ class App:
         total_price_label = tk.Label(bottom_frame, text=f"Total Price: {formatted_price}", font=("Helvetica", 16, "bold"), bg='lightblue')
         total_price_label.pack(pady=10)
 
-        confirm_button = tk.Button(bottom_frame, text="Confirm", command=self.confirm_cart, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        confirm_button = tk.Button(bottom_frame, text="Confirm", command=self.confirm_cart, bg='orange', font=("Helvetica", 24, "bold"), padx=10, pady=5, width=15, height=2)
         confirm_button.pack()
 
         self.total_price_label = total_price_label
@@ -1739,7 +1738,7 @@ class App:
     def confirm_cart(self):
         if hasattr(self, 'cart_window') and self.cart_window.winfo_exists():
             self.cart_window.destroy()
-        self.show_order_page(self.current_user_id)
+        self.show_order_page(self.current_order_id)
 
     def get_rasa_options(self):
         self.db_manager.connect()
@@ -1781,7 +1780,7 @@ class App:
             else:
                 self.counts[item_key] = tk.Label(self.root, text=str(total_quantity))
 
-        self.show_order_page(self.current_user_id)
+        self.show_order_page(self.current_order_id)
 
     def decrement_quantity(self):
         current_quantity = self.quantity_var.get()
@@ -1792,11 +1791,11 @@ class App:
         current_quantity = self.quantity_var.get()
         self.quantity_var.set(current_quantity + 1)
 
-    def show_rasa_selection(self, user_id):
-        if user_id is None:
-            raise ValueError("User ID must not be None")
+    def show_rasa_selection(self, order_id):
+        if order_id is None:
+            raise ValueError("Order ID must not be None")
 
-        print("User ID:", user_id)
+        print("Order ID:", order_id)
         self.destroy_last_frame()
 
         rasa_selection_frame = tk.Frame(self.root, bg='lightblue')
@@ -1805,8 +1804,8 @@ class App:
         title_label = tk.Label(rasa_selection_frame, text="Pilih Rasa untuk Sirup Dua Rasa", font=("Helvetica", 24, "bold"), bg='lightblue')
         title_label.pack(pady=20)
 
-        user_id_label = tk.Label(rasa_selection_frame, text=f"User ID: {user_id}", font=("Helvetica", 12), bg='lightblue')
-        user_id_label.place(x=20, y=20)
+        order_id_label = tk.Label(rasa_selection_frame, text=f"Order ID: {order_id}", font=("Helvetica", 12), bg='lightblue')
+        order_id_label.place(x=20, y=20)
 
         self.rasa_var1 = tk.StringVar()
         self.rasa_var2 = tk.StringVar()
@@ -1869,7 +1868,7 @@ class App:
         add_button = tk.Button(rasa_selection_frame, text="Add to Cart", command=self.add_to_cart, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         add_button.pack(pady=20)
 
-        back_button = tk.Button(rasa_selection_frame, text="Back", command=lambda: self.show_order_page(self.current_user_id), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button = tk.Button(rasa_selection_frame, text="Back", command=lambda: self.show_order_page(self.current_order_id), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         back_button.pack(pady=20)
 
         self.last_frame = rasa_selection_frame
@@ -1885,10 +1884,10 @@ class App:
         # If order is not empty, process it
         if self.order:
             # Show order page after adding order
-            self.show_order_page(self.current_user_id)
+            self.show_order_page(self.current_order_id)
         else:
             # If order is empty, directly go back to show_order_page
-            self.show_order_page(self.current_user_id)
+            self.show_order_page(self.current_order_id)
 
     def update_order_from_counts(self):
         for item, quantity_label in list(self.counts.items()):
@@ -1949,17 +1948,17 @@ class App:
                 self.order[item] = {'quantity': quantity, 'rasa': [pilihan_rasa], 'persentase': [persentase_var]}
 
         # Lanjutkan dengan menampilkan ringkasan pesanan
-        self.show_order_summary(self.current_user_id)
+        self.show_order_summary(self.current_order_id)
 
     def go_back_to_welcome_page(self):
         self.destroy_last_frame()
         self.create_user_welcome_page()
 
-    def show_order_summary(self, user_id):
-        if user_id is None:
-            raise ValueError("User ID must not be None")
+    def show_order_summary(self, order_id):
+        if order_id is None:
+            raise ValueError("Order ID must not be None")
 
-        print("User ID:", user_id)
+        print("Order ID:", order_id)
         self.destroy_last_frame()
 
         self.order_summary_frame = tk.Frame(self.root, bg='lightblue')
@@ -1968,8 +1967,8 @@ class App:
         summary_label = tk.Label(self.order_summary_frame, text="ORDER SUMMARY", font=("Helvetica", 24, "bold"), bg='lightblue')
         summary_label.pack(pady=(40, 20), padx=20)
 
-        user_id_label = tk.Label(self.order_summary_frame, text=f"User ID: {user_id}", font=("Helvetica", 12), bg='lightblue')
-        user_id_label.place(x=20, y=20)
+        order_id_label = tk.Label(self.order_summary_frame, text=f"Order ID: {order_id}", font=("Helvetica", 12), bg='lightblue')
+        order_id_label.place(x=20, y=20)
 
         content_frame = tk.Frame(self.order_summary_frame, bg='lightblue')
         content_frame.pack(expand=True, fill='both', padx=20, pady=(0, 20))
@@ -2048,14 +2047,14 @@ class App:
 
                 if 'sirup dua rasa' in nama_minuman.lower() and details.get('variants'):
                     variant = details['variants'][0]
-                    minus_button = tk.Button(quantity_frame, text="-", command=lambda n=nama_minuman, r=variant['rasas'], p=variant['persentase']: self.update_quantity(n, -1, r, p), bg='red', font=("Helvetica", 12, "bold"), padx=5, pady=5)
-                    plus_button = tk.Button(quantity_frame, text="+", command=lambda n=nama_minuman, r=variant['rasas'], p=variant['persentase']: self.update_quantity(n, 1, r, p), bg='green', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+                    minus_button = tk.Button(quantity_frame, text="-", command=lambda n=nama_minuman, r=variant['rasas'], p=variant['persentase']: self.update_quantity(n, -1, r, p), bg='red', font=("Helvetica", 20, "bold"), padx=5, pady=5)
+                    plus_button = tk.Button(quantity_frame, text="+", command=lambda n=nama_minuman, r=variant['rasas'], p=variant['persentase']: self.update_quantity(n, 1, r, p), bg='green', font=("Helvetica", 20, "bold"), padx=5, pady=5)
                 else:
-                    minus_button = tk.Button(quantity_frame, text="-", command=lambda n=nama_minuman: self.update_quantity(n, -1), bg='red', font=("Helvetica", 12, "bold"), padx=5, pady=5)
-                    plus_button = tk.Button(quantity_frame, text="+", command=lambda n=nama_minuman: self.update_quantity(n, 1), bg='green', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+                    minus_button = tk.Button(quantity_frame, text="-", command=lambda n=nama_minuman: self.update_quantity(n, -1), bg='red', font=("Helvetica", 20, "bold"), padx=5, pady=5)
+                    plus_button = tk.Button(quantity_frame, text="+", command=lambda n=nama_minuman: self.update_quantity(n, 1), bg='green', font=("Helvetica", 20, "bold"), padx=5, pady=5)
 
                 minus_button.pack(side='left', padx=(0, 5))
-                quantity_label = tk.Label(quantity_frame, text=str(quantity), font=("Helvetica", 12), bg='white')
+                quantity_label = tk.Label(quantity_frame, text=str(quantity), font=("Helvetica", 20), bg='white')
                 quantity_label.pack(side='left', padx=(5, 5))
                 plus_button.pack(side='left', padx=(5, 0))
 
@@ -2077,7 +2076,7 @@ class App:
                 delete_button_frame = tk.Frame(item_frame, bg='white')
                 delete_button_frame.pack(side='right')
 
-                delete_button = tk.Button(delete_button_frame, text="Delete", command=lambda n=nama_minuman: self.delete_order(n), bg='red', font=("Helvetica", 12, "bold"), padx=5, pady=5)
+                delete_button = tk.Button(delete_button_frame, text="Delete", command=lambda n=nama_minuman: self.delete_order(n), bg='red', font=("Helvetica", 16, "bold"), padx=10, pady=5, width=8, height=1)
                 delete_button.pack(side='right', padx=(0, 25))
 
         total_price_label = tk.Label(self.order_summary_frame, text=f"Total Price: {self.format_price(total_price)}", font=("Helvetica", 16), bg='lightblue')
@@ -2086,10 +2085,10 @@ class App:
         button_frame = tk.Frame(self.order_summary_frame, bg='lightblue')
         button_frame.pack(side='bottom', pady=20)
 
-        add_order_button = tk.Button(button_frame, text="Add Order", command=self.add_order, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        add_order_button = tk.Button(button_frame, text="Add Order", command=self.add_order, bg='orange', font=("Helvetica", 24, "bold"), padx=10, pady=5, width=15, height=2)
         add_order_button.pack(pady=20)
 
-        confirm_button = tk.Button(button_frame, text="Confirm Order", command=self.confirm_order, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        confirm_button = tk.Button(button_frame, text="Confirm Order", command=self.confirm_order, bg='green', font=("Helvetica", 24, "bold"), padx=10, pady=5, width=15, height=2)
         confirm_button.pack(pady=20)
 
         self.last_frame = self.order_summary_frame
@@ -2099,7 +2098,7 @@ class App:
         if confirmation:
             try:
                 del self.order[nama_minuman]
-                self.show_order_summary(self.current_user_id)
+                self.show_order_summary(self.current_order_id)
             except KeyError as e:
                 print(f"Error deleting order: {e}")
 
@@ -2115,7 +2114,7 @@ class App:
                                     self.order[nama_minuman].remove(details)
                                 if not self.order[nama_minuman]:
                                     del self.order[nama_minuman]
-                                self.show_order_summary(self.current_user_id)
+                                self.show_order_summary(self.current_order_id)
                                 return
                 else:
                     details['quantity'] += delta
@@ -2123,9 +2122,9 @@ class App:
                         self.order[nama_minuman].remove(details)
                     if not self.order[nama_minuman]:
                         del self.order[nama_minuman]
-                    self.show_order_summary(self.current_user_id)
+                    self.show_order_summary(self.current_order_id)
                     return
-        self.show_order_summary(self.current_user_id)
+        self.show_order_summary(self.current_order_id)
 
     def update_counts_from_order(self):
         for item, details_list in self.order.items():
@@ -2162,7 +2161,7 @@ class App:
                         persentase = ''
 
                 self.order_details.append({
-                    'user_id': self.current_user_id,
+                    'order_id': self.current_order_id,
                     'nama_minuman': nama_minuman,
                     'quantity': quantity,
                     'total_price': total_harga,
@@ -2184,7 +2183,7 @@ class App:
         formatted_price = self.format_price(total_amount)
         print("Formatted Price:", formatted_price)  # Debug print
 
-        reference_id = f"{self.current_user_id}"  # Generate reference_id based on user_id
+        reference_id = f"{self.current_order_id}"  # Generate reference_id based on order_id
 
         confirmation = messagebox.askyesno("Confirmation", f"The total amount to be paid is {formatted_price}. Do you want to proceed and generate the QR code?")
 
@@ -2200,7 +2199,7 @@ class App:
                 # Save all orders to the database with status_pembayaran = 0 (not paid)
                 for order_detail in self.order_details:
                     order_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    user_id = order_detail['user_id']
+                    order_id = order_detail['order_id']
                     nama_minuman = order_detail['nama_minuman']
                     if 'Sirup Dua Rasa' in nama_minuman:
                         pilihan_rasa = ', '.join(order_detail.get('rasa', []))
@@ -2214,11 +2213,11 @@ class App:
                     status_pembayaran = 0  # Set status_pembayaran to 0 initially
                     status_pesanan = 'Completed'  # status_pesanan: Completed
 
-                    print(f"Inserting order: {order_date}, {user_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
+                    print(f"Inserting order: {order_date}, {order_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
 
                     self.db_manager.insert_order(
                         order_date,
-                        user_id,
+                        order_id,
                         nama_minuman,
                         pilihan_rasa,
                         persentase,
@@ -2321,10 +2320,10 @@ class App:
             messagebox.showerror("Error", f"Failed to generate QR code: {str(e)}")
 
     def show_payment_page(self, payment_url):
-        if self.current_user_id is None:
-            raise ValueError("User ID must not be None")
+        if self.current_order_id is None:
+            raise ValueError("Order ID must not be None")
 
-        print("User ID:", self.current_user_id)
+        print("Order ID:", self.current_order_id)
         print("Payment URL:", payment_url)
 
         self.destroy_last_frame()
@@ -2335,8 +2334,8 @@ class App:
         payment_label = tk.Label(payment_page_frame, text="PAYMENT PAGE", font=("Helvetica", 24, "bold"), bg='lightblue')
         payment_label.pack(pady=(80, 30), padx=20)
 
-        user_id_label = tk.Label(payment_page_frame, text=f"User ID: {self.current_user_id}", font=("Helvetica", 12), bg='lightblue')
-        user_id_label.place(x=20, y=20)
+        order_id_label = tk.Label(payment_page_frame, text=f"Order ID: {self.current_order_id}", font=("Helvetica", 12), bg='lightblue')
+        order_id_label.place(x=20, y=20)
 
         qr = qrcode.QRCode(
             version=1,
@@ -2344,6 +2343,7 @@ class App:
             box_size=10,
             border=4,
         )
+        
         qr.add_data(payment_url)
         qr.make(fit=True)
 
@@ -2355,6 +2355,9 @@ class App:
         qr_label = tk.Label(payment_page_frame, image=qr_image)
         qr_label.image = qr_image  # Keep a reference to avoid garbage collection
         qr_label.pack(pady=(0, 50))
+        
+        confirm_payment_button = tk.Button(payment_page_frame, text="Confirm Payment and Order", command=lambda: self.confirm_payment_and_order(self.current_order_id), bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5, width=30, height=2)
+        confirm_payment_button.pack(pady=20)
 
         self.last_frame = payment_page_frame
 
@@ -2407,110 +2410,110 @@ class App:
         self.polling = False
         self.root.destroy()
 
-    # def confirm_payment_and_order(self, user_id):
-    #     try:
-    #         self.db_manager.connect()
-    #         self.populate_order_details()
+    def confirm_payment_and_order(self, order_id):
+        try:
+            self.db_manager.connect()
+            self.populate_order_details()
 
-    #         # Send order to the robot
-    #         # threading.Thread(target=self.send_order_to_robot, args=(self.order_details,)).start()
+            # Send order to the robot
+            threading.Thread(target=self.send_order_to_robot, args=(self.order_details,)).start()
 
-    #         # Simulate payment processing success
-    #         # For actual implementation, replace this with actual payment processing logic
-    #         payment_successful = True  # Assume payment is successful for demo purposes
+            # Simulate payment processing success
+            # For actual implementation, replace this with actual payment processing logic
+            payment_successful = True  # Assume payment is successful for demo purposes
 
-    #         if payment_successful:
-    #             # Update status_pembayaran to 1 (paid) after successful payment
-    #             for order_detail in self.order_details:
-    #                 order_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    #                 nama_minuman = order_detail['nama_minuman']
-    #                 pilihan_rasa = ', '.join(order_detail.get('rasa', [])) if 'Sirup Dua Rasa' in nama_minuman else ''
-    #                 persentase = order_detail.get('persentase', '') if 'Sirup Dua Rasa' in nama_minuman else ''
-    #                 jumlah = order_detail['quantity']
-    #                 harga_satuan = self.menu_items[nama_minuman]['harga']
-    #                 total_harga = order_detail['total_price']
-    #                 status_pembayaran = 1  # Set status_pembayaran to 1 after successful payment
-    #                 status_pesanan = 'Completed'  # status_pesanan: Completed
+            if payment_successful:
+                # Update status_pembayaran to 1 (paid) after successful payment
+                for order_detail in self.order_details:
+                    order_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    nama_minuman = order_detail['nama_minuman']
+                    pilihan_rasa = ', '.join(order_detail.get('rasa', [])) if 'Sirup Dua Rasa' in nama_minuman else ''
+                    persentase = order_detail.get('persentase', '') if 'Sirup Dua Rasa' in nama_minuman else ''
+                    jumlah = order_detail['quantity']
+                    harga_satuan = self.menu_items[nama_minuman]['harga']
+                    total_harga = order_detail['total_price']
+                    status_pembayaran = 1  # Set status_pembayaran to 1 after successful payment
+                    status_pesanan = 'Completed'  # status_pesanan: Completed
 
-    #                 print(f"Updating order payment status: {order_date}, {user_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
+                    print(f"Updating order payment status: {order_date}, {order_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
 
-    #                 # Update the order in the database with the new payment status
-    #                 self.db_manager.update_order_payment_status(
-    #                     order_date,
-    #                     user_id,
-    #                     nama_minuman,
-    #                     pilihan_rasa,
-    #                     persentase,
-    #                     jumlah,
-    #                     harga_satuan,
-    #                     total_harga,
-    #                     status_pembayaran,
-    #                     status_pesanan
-    #                 )
+                    # Update the order in the database with the new payment status
+                    self.db_manager.insert_order(
+                        order_date,
+                        order_id,
+                        nama_minuman,
+                        pilihan_rasa,
+                        persentase,
+                        jumlah,
+                        harga_satuan,
+                        total_harga,
+                        status_pembayaran,
+                        status_pesanan
+                    )
 
-    #         messagebox.showinfo("Payment Processed", "Payment processed successfully. Your order is in process.")
-    #         self.reset_all_item_quantities()
-    #         self.create_user_welcome_page()
+            messagebox.showinfo("Payment Processed", "Payment processed successfully. Your order is in process.")
+            self.reset_all_item_quantities()
+            self.create_user_welcome_page()
 
-    #     except Exception as e:
-    #         messagebox.showerror("Error", f"Failed to process payment: {str(e)}")
-    #     finally:
-    #         self.db_manager.disconnect()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to process payment: {str(e)}")
+        finally:
+            self.db_manager.disconnect()
 
-    # def send_order_to_robot(self, order_details):
-    #     HOST = "192.168.0.120"  # Ganti dengan alamat IP robot yang sebenarnya
-    #     PORT = 30002  # Ganti dengan port robot yang sebenarnya
+    def send_order_to_robot(self, order_details):
+        HOST = "192.168.0.120"  # Ganti dengan alamat IP robot yang sebenarnya
+        PORT = 30002  # Ganti dengan port robot yang sebenarnya
 
-    #     try:
-    #         start_time = time.time()
-    #         for order_detail in order_details:
-    #             if order_detail['user_id'] != self.current_user_id:
-    #                 continue  # Skip this order if it doesn't match the current user_id
+        try:
+            start_time = time.time()
+            for order_detail in order_details:
+                if order_detail['order_id'] != self.current_order_id:
+                    continue  # Skip this order if it doesn't match the current order_id
 
-    #             nama_minuman = order_detail['nama_minuman']
-    #             pilihan_rasa = ', '.join(order_detail.get('rasa', []))
-    #             persentase = order_detail.get('persentase', '')  # Dapatkan persentase dari order_detail jika ada
-    #             jumlah = order_detail['quantity']
-    #             kode_minuman = self.get_drink_code(nama_minuman, pilihan_rasa, persentase)
+                nama_minuman = order_detail['nama_minuman']
+                pilihan_rasa = ', '.join(order_detail.get('rasa', []))
+                persentase = order_detail.get('persentase', '')  # Dapatkan persentase dari order_detail jika ada
+                jumlah = order_detail['quantity']
+                kode_minuman = self.get_drink_code(nama_minuman, pilihan_rasa, persentase)
 
-    #             if kode_minuman is None:
-    #                 print(f"Cannot find code for drink: {nama_minuman} with pilihan_rasa: {pilihan_rasa} and persentase: {persentase}. Skipping.")
-    #                 continue  # Skip this order if no matching code is found
+                if kode_minuman is None:
+                    print(f"Cannot find code for drink: {nama_minuman} with pilihan_rasa: {pilihan_rasa} and persentase: {persentase}. Skipping.")
+                    continue  # Skip this order if no matching code is found
 
-    #             for _ in range(jumlah):
-    #                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-    #                     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    #                     s.bind((HOST, PORT))  # Bind to the port
-    #                     s.listen(5)  # Now wait for client connection.
-    #                     c, addr = s.accept()  # Establish connection with client.
-    #                     print("Connected to robot.")
-    #                     try:
-    #                         msg = c.recv(1024).decode()
-    #                         print("Pose Position = ", msg)
-    #                         msg = c.recv(1024).decode()
-    #                         print("Joint Positions = ", msg)
-    #                         msg = c.recv(1024).decode()
-    #                         print("Request = ", msg)
-    #                         time.sleep(1)
-    #                         print("")
-    #                         time.sleep(0.5)
-    #                         # Assuming the robot asks for data
-    #                         if msg == "asking_for_data":
-    #                             message = f"({kode_minuman})"
-    #                             c.send(message.encode())
-    #                             print(f"Sent message to robot: {message}")
+                for _ in range(jumlah):
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                        s.bind((HOST, PORT))  # Bind to the port
+                        s.listen(5)  # Now wait for client connection.
+                        c, addr = s.accept()  # Establish connection with client.
+                        print("Connected to robot.")
+                        try:
+                            msg = c.recv(1024).decode()
+                            print("Pose Position = ", msg)
+                            msg = c.recv(1024).decode()
+                            print("Joint Positions = ", msg)
+                            msg = c.recv(1024).decode()
+                            print("Request = ", msg)
+                            time.sleep(1)
+                            print("")
+                            time.sleep(0.5)
+                            # Assuming the robot asks for data
+                            if msg == "asking_for_data":
+                                message = f"({kode_minuman})"
+                                c.send(message.encode())
+                                print(f"Sent message to robot: {message}")
 
-    #                     except socket.error as socketerror:
-    #                         print(socketerror)
+                        except socket.error as socketerror:
+                            print(socketerror)
 
-    #         end_time = time.time()  # Akhiri pengukuran waktu
-    #         elapsed_time = end_time - start_time  # Hitung waktu yang berlalu
-    #         print(f"Time taken to send orders to robot: {elapsed_time} seconds")
+            end_time = time.time()  # Akhiri pengukuran waktu
+            elapsed_time = end_time - start_time  # Hitung waktu yang berlalu
+            print(f"Time taken to send orders to robot: {elapsed_time} seconds")
 
-    #     except ValueError as ve:
-    #         print(f"ValueError: {ve}. Defaulting to 1.")
+        except ValueError as ve:
+            print(f"ValueError: {ve}. Defaulting to 1.")
 
-    #     c.close()
+        c.close()
 
     def load_minuman_data(self):
         minuman_data = self.db_manager.fetch_minuman_data()
