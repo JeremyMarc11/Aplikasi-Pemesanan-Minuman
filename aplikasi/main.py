@@ -21,6 +21,7 @@ from queue import Queue
 import pandas as pd
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
+from server import get_ngrok_url
 
 class DatabaseManager:
     def __init__(self, host, port, username, password, database):
@@ -58,13 +59,13 @@ class DatabaseManager:
         (order_date, order_id, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        values = (order_date, order_id, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan)
         try:
-            self.cursor.execute(query, values)
+            self.cursor.execute(query, (order_date, order_id, nama_minuman, pilihan_rasa, persentase, jumlah, harga_satuan, total_harga, status_pembayaran, status_pesanan))
             self.conn.commit()
             print("Order inserted successfully.")
         except mysql.connector.Error as e:
-            print("Error:", e)
+            print(f"Error inserting order: {e}")
+            raise
 
     def insert_menu(self, nama_minuman, harga, gambar_minuman, deskripsi):
         try:
@@ -148,8 +149,8 @@ class App:
         self.cart_quantities = {}
         self.minuman_data = {}
         self.load_minuman_data()
-        self.current_order_id = None
-        self.previous_order_id = None
+        self.current_user_id = None
+        self.previous_user_id = None
         self.sales_data = []
         self.polling = False
         self.root.bind("<Configure>", self.resize_plot)
@@ -585,7 +586,7 @@ class App:
 
                 # Format harga
                 formatted_price = self.format_price(harga)
-                label_text = f"{nama_minuman}\nRp {formatted_price}"  # Combine nama_minuman and harga into a single text
+                label_text = f"{nama_minuman}\n{formatted_price}"  # Combine nama_minuman and harga into a single text
                 label = tk.Label(item_frame, text=label_text, font=("Helvetica", 14), bg='lightblue')
                 label.pack(pady=(10, 0))
 
@@ -883,7 +884,7 @@ class App:
         sales_chart_button = tk.Button(button_frame, text="Generate Sales Chart", command=self.generate_sales_chart, bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         sales_chart_button.grid(row=0, column=5, padx=10)
 
-        columns = ("id", "order_date", "order_id", "nama_minuman", "pilihan_rasa", "persentase", "jumlah", "harga_satuan", "total_harga", "status_pembayaran", "status_pesanan")
+        columns = ("id", "order_date", "user_id", "nama_minuman", "pilihan_rasa", "persentase", "jumlah", "harga_satuan", "total_harga", "status_pembayaran", "status_pesanan")
         self.sales_table = ttk.Treeview(self.sales_data_frame, columns=columns, show="headings")
 
         for col in columns:
@@ -1287,7 +1288,7 @@ class App:
             self.db_manager.disconnect()
 
             # Konversi data ke DataFrame pandas
-            columns = ["id", "order_date", "order_id", "nama_minuman", "pilihan_rasa", "persentase", "jumlah", "harga_satuan", "total_harga", "status_pembayaran", "status_pesanan"]
+            columns = ["id", "order_date", "user_id", "nama_minuman", "pilihan_rasa", "persentase", "jumlah", "harga_satuan", "total_harga", "status_pembayaran", "status_pesanan"]
             df = pd.DataFrame(sales_data, columns=columns)
 
             # Pilih lokasi dan nama file untuk menyimpan data
@@ -1379,25 +1380,25 @@ class App:
 
     # -----------------------------------------------------------USER---------------------------------------------------------------------
     def create_order_for_user(self):
-        # Generate a new Order ID
-        order_id = str(uuid.uuid4())
-        self.show_order_page(order_id)
+        # Generate a new User ID
+        user_id = str(uuid.uuid4())
+        self.show_order_page(user_id)
 
-    def show_order_page(self, order_id):
-        if order_id is None:
-            raise ValueError("Order ID must not be None")
+    def show_order_page(self, user_id):
+        if user_id is None:
+            raise ValueError("User ID must not be None")
 
-        print("Order ID:", order_id)
+        print("User ID:", user_id)
 
         self.destroy_last_frame()
 
-        self.current_order_id = order_id  # Set the current Order ID
+        self.current_user_id = user_id  # Set the current User ID
 
         # Reset item quantities only if the user is different
-        if getattr(self, 'previous_order_id', None) != order_id:
+        if getattr(self, 'previous_user_id', None) != user_id:
             self.reset_all_item_quantities()
 
-        self.previous_order_id = order_id
+        self.previous_user_id = user_id
 
         self.order_frame_container = tk.Frame(self.root, bg='lightblue')
         self.order_frame_container.pack(expand=True, fill='both')
@@ -1406,8 +1407,8 @@ class App:
         title_label.pack(pady=40)
 
         # Tampilkan ID pengguna
-        order_id_label = tk.Label(self.order_frame_container, text=f"Order ID: {order_id}", font=("Helvetica", 12), bg='lightblue')
-        order_id_label.place(x=20, y=20)
+        user_id_label = tk.Label(self.order_frame_container, text=f"User ID: {user_id}", font=("Helvetica", 12), bg='lightblue')
+        user_id_label.place(x=20, y=20)
 
         content_frame = tk.Frame(self.order_frame_container, bg='lightblue')
         content_frame.pack(expand=True, fill='both')
@@ -1537,7 +1538,7 @@ class App:
 
             # Update order
             if nama_minuman == "Sirup Dua Rasa":
-                self.show_rasa_selection(self.current_order_id)
+                self.show_rasa_selection(self.current_user_id)
             else:
                 if nama_minuman not in self.order:
                     self.order[nama_minuman] = [{'quantity': 1, 'variants': []}]
@@ -1738,7 +1739,7 @@ class App:
     def confirm_cart(self):
         if hasattr(self, 'cart_window') and self.cart_window.winfo_exists():
             self.cart_window.destroy()
-        self.show_order_page(self.current_order_id)
+        self.show_order_page(self.current_user_id)
 
     def get_rasa_options(self):
         self.db_manager.connect()
@@ -1780,7 +1781,7 @@ class App:
             else:
                 self.counts[item_key] = tk.Label(self.root, text=str(total_quantity))
 
-        self.show_order_page(self.current_order_id)
+        self.show_order_page(self.current_user_id)
 
     def decrement_quantity(self):
         current_quantity = self.quantity_var.get()
@@ -1791,11 +1792,11 @@ class App:
         current_quantity = self.quantity_var.get()
         self.quantity_var.set(current_quantity + 1)
 
-    def show_rasa_selection(self, order_id):
-        if order_id is None:
-            raise ValueError("Order ID must not be None")
+    def show_rasa_selection(self, user_id):
+        if user_id is None:
+            raise ValueError("User ID must not be None")
 
-        print("Order ID:", order_id)
+        print("User ID:", user_id)
         self.destroy_last_frame()
 
         rasa_selection_frame = tk.Frame(self.root, bg='lightblue')
@@ -1804,8 +1805,8 @@ class App:
         title_label = tk.Label(rasa_selection_frame, text="Pilih Rasa untuk Sirup Dua Rasa", font=("Helvetica", 24, "bold"), bg='lightblue')
         title_label.pack(pady=20)
 
-        order_id_label = tk.Label(rasa_selection_frame, text=f"Order ID: {order_id}", font=("Helvetica", 12), bg='lightblue')
-        order_id_label.place(x=20, y=20)
+        user_id_label = tk.Label(rasa_selection_frame, text=f"User ID: {user_id}", font=("Helvetica", 12), bg='lightblue')
+        user_id_label.place(x=20, y=20)
 
         self.rasa_var1 = tk.StringVar()
         self.rasa_var2 = tk.StringVar()
@@ -1868,7 +1869,7 @@ class App:
         add_button = tk.Button(rasa_selection_frame, text="Add to Cart", command=self.add_to_cart, bg='green', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         add_button.pack(pady=20)
 
-        back_button = tk.Button(rasa_selection_frame, text="Back", command=lambda: self.show_order_page(self.current_order_id), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
+        back_button = tk.Button(rasa_selection_frame, text="Back", command=lambda: self.show_order_page(self.current_user_id), bg='orange', font=("Helvetica", 12, "bold"), padx=10, pady=5)
         back_button.pack(pady=20)
 
         self.last_frame = rasa_selection_frame
@@ -1884,10 +1885,10 @@ class App:
         # If order is not empty, process it
         if self.order:
             # Show order page after adding order
-            self.show_order_page(self.current_order_id)
+            self.show_order_page(self.current_user_id)
         else:
             # If order is empty, directly go back to show_order_page
-            self.show_order_page(self.current_order_id)
+            self.show_order_page(self.current_user_id)
 
     def update_order_from_counts(self):
         for item, quantity_label in list(self.counts.items()):
@@ -1948,17 +1949,17 @@ class App:
                 self.order[item] = {'quantity': quantity, 'rasa': [pilihan_rasa], 'persentase': [persentase_var]}
 
         # Lanjutkan dengan menampilkan ringkasan pesanan
-        self.show_order_summary(self.current_order_id)
+        self.show_order_summary(self.current_user_id)
 
     def go_back_to_welcome_page(self):
         self.destroy_last_frame()
         self.create_user_welcome_page()
 
-    def show_order_summary(self, order_id):
-        if order_id is None:
-            raise ValueError("Order ID must not be None")
+    def show_order_summary(self, user_id):
+        if user_id is None:
+            raise ValueError("User ID must not be None")
 
-        print("Order ID:", order_id)
+        print("User ID:", user_id)
         self.destroy_last_frame()
 
         self.order_summary_frame = tk.Frame(self.root, bg='lightblue')
@@ -1967,8 +1968,8 @@ class App:
         summary_label = tk.Label(self.order_summary_frame, text="ORDER SUMMARY", font=("Helvetica", 24, "bold"), bg='lightblue')
         summary_label.pack(pady=(40, 20), padx=20)
 
-        order_id_label = tk.Label(self.order_summary_frame, text=f"Order ID: {order_id}", font=("Helvetica", 12), bg='lightblue')
-        order_id_label.place(x=20, y=20)
+        user_id_label = tk.Label(self.order_summary_frame, text=f"User ID: {user_id}", font=("Helvetica", 12), bg='lightblue')
+        user_id_label.place(x=20, y=20)
 
         content_frame = tk.Frame(self.order_summary_frame, bg='lightblue')
         content_frame.pack(expand=True, fill='both', padx=20, pady=(0, 20))
@@ -2098,7 +2099,7 @@ class App:
         if confirmation:
             try:
                 del self.order[nama_minuman]
-                self.show_order_summary(self.current_order_id)
+                self.show_order_summary(self.current_user_id)
             except KeyError as e:
                 print(f"Error deleting order: {e}")
 
@@ -2114,7 +2115,7 @@ class App:
                                     self.order[nama_minuman].remove(details)
                                 if not self.order[nama_minuman]:
                                     del self.order[nama_minuman]
-                                self.show_order_summary(self.current_order_id)
+                                self.show_order_summary(self.current_user_id)
                                 return
                 else:
                     details['quantity'] += delta
@@ -2122,9 +2123,9 @@ class App:
                         self.order[nama_minuman].remove(details)
                     if not self.order[nama_minuman]:
                         del self.order[nama_minuman]
-                    self.show_order_summary(self.current_order_id)
+                    self.show_order_summary(self.current_user_id)
                     return
-        self.show_order_summary(self.current_order_id)
+        self.show_order_summary(self.current_user_id)
 
     def update_counts_from_order(self):
         for item, details_list in self.order.items():
@@ -2161,7 +2162,7 @@ class App:
                         persentase = ''
 
                 self.order_details.append({
-                    'order_id': self.current_order_id,
+                    'user_id': self.current_user_id,
                     'nama_minuman': nama_minuman,
                     'quantity': quantity,
                     'total_price': total_harga,
@@ -2183,19 +2184,23 @@ class App:
         formatted_price = self.format_price(total_amount)
         print("Formatted Price:", formatted_price)  # Debug print
 
-        reference_id = f"{self.current_order_id}"  # Generate reference_id based on order_id
+        reference_id = f"{self.current_user_id}"  # Generate reference_id based on user_id
 
         confirmation = messagebox.askyesno("Confirmation", f"The total amount to be paid is {formatted_price}. Do you want to proceed and generate the QR code?")
 
         if confirmation:
             try:
+                ngrok_url = self.get_ngrok_url()
+                if not ngrok_url:
+                    raise Exception("Failed to retrieve ngrok URL")
+
                 self.db_manager.connect()
                 self.populate_order_details()
 
                 # Save all orders to the database with status_pembayaran = 0 (not paid)
                 for order_detail in self.order_details:
                     order_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    order_id = order_detail['order_id']
+                    user_id = order_detail['user_id']
                     nama_minuman = order_detail['nama_minuman']
                     if 'Sirup Dua Rasa' in nama_minuman:
                         pilihan_rasa = ', '.join(order_detail.get('rasa', []))
@@ -2209,11 +2214,11 @@ class App:
                     status_pembayaran = 0  # Set status_pembayaran to 0 initially
                     status_pesanan = 'Completed'  # status_pesanan: Completed
 
-                    print(f"Inserting order: {order_date}, {order_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
+                    print(f"Inserting order: {order_date}, {user_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
 
                     self.db_manager.insert_order(
                         order_date,
-                        order_id,
+                        user_id,
                         nama_minuman,
                         pilihan_rasa,
                         persentase,
@@ -2225,7 +2230,7 @@ class App:
                     )
 
                 # After saving the order, generate QR code
-                self.generate_qr_code(reference_id, total_amount)
+                self.generate_qr_code(reference_id, total_amount, ngrok_url)
 
             except Exception as e:
                 print(f"Error processing order: {e}")
@@ -2233,7 +2238,19 @@ class App:
             finally:
                 self.db_manager.disconnect()
 
-    def generate_qr_code(self, reference_id, total_amount):
+    def get_ngrok_url(self):
+        try:
+            response = requests.get("http://127.0.0.1:7000/get_ngrok_url")
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("ngrok_url")
+            else:
+                raise Exception(f"Failed to retrieve ngrok URL. Status code: {response.status_code}")
+        except Exception as e:
+            print(f"Error retrieving ngrok URL: {e}")
+            return None
+
+    def generate_qr_code(self, reference_id, total_amount, ngrok_url):
         headers = {
             'Content-Type': 'application/json',
             'Authorization': 'Basic YXBpLXNtYXJ0bGluay1zYnhAcGV0cmEuYWMuaWQ6ZEhvRjBTMzJ2MFpCbVd2'
@@ -2264,8 +2281,8 @@ class App:
             "channel": ["WALLET_QRIS"],
             "type": "payment-page",
             "payment_mode": "CLOSE",
-            "expired_time": "",  # Set an actual expiration time if needed
-            "callback_url": "https://7425-203-189-122-12.ngrok-free.app/callback",
+            "expired_time": "", 
+            "callback_url": f"{ngrok_url}/callback",
             "success_redirect_url": "-",
             "failed_redirect_url": "-"
         }
@@ -2304,10 +2321,10 @@ class App:
             messagebox.showerror("Error", f"Failed to generate QR code: {str(e)}")
 
     def show_payment_page(self, payment_url):
-        if self.current_order_id is None:
-            raise ValueError("Order ID must not be None")
+        if self.current_user_id is None:
+            raise ValueError("User ID must not be None")
 
-        print("Order ID:", self.current_order_id)
+        print("User ID:", self.current_user_id)
         print("Payment URL:", payment_url)
 
         self.destroy_last_frame()
@@ -2318,8 +2335,8 @@ class App:
         payment_label = tk.Label(payment_page_frame, text="PAYMENT PAGE", font=("Helvetica", 24, "bold"), bg='lightblue')
         payment_label.pack(pady=(80, 30), padx=20)
 
-        order_id_label = tk.Label(payment_page_frame, text=f"Order ID: {self.current_order_id}", font=("Helvetica", 12), bg='lightblue')
-        order_id_label.place(x=20, y=20)
+        user_id_label = tk.Label(payment_page_frame, text=f"User ID: {self.current_user_id}", font=("Helvetica", 12), bg='lightblue')
+        user_id_label.place(x=20, y=20)
 
         qr = qrcode.QRCode(
             version=1,
@@ -2390,7 +2407,7 @@ class App:
         self.polling = False
         self.root.destroy()
 
-    # def confirm_payment_and_order(self, order_id):
+    # def confirm_payment_and_order(self, user_id):
     #     try:
     #         self.db_manager.connect()
     #         self.populate_order_details()
@@ -2415,12 +2432,12 @@ class App:
     #                 status_pembayaran = 1  # Set status_pembayaran to 1 after successful payment
     #                 status_pesanan = 'Completed'  # status_pesanan: Completed
 
-    #                 print(f"Updating order payment status: {order_date}, {order_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
+    #                 print(f"Updating order payment status: {order_date}, {user_id}, {nama_minuman}, {pilihan_rasa}, {persentase}, {jumlah}, {harga_satuan}, {total_harga}, {status_pembayaran}, {status_pesanan}")
 
     #                 # Update the order in the database with the new payment status
     #                 self.db_manager.update_order_payment_status(
     #                     order_date,
-    #                     order_id,
+    #                     user_id,
     #                     nama_minuman,
     #                     pilihan_rasa,
     #                     persentase,
@@ -2447,8 +2464,8 @@ class App:
     #     try:
     #         start_time = time.time()
     #         for order_detail in order_details:
-    #             if order_detail['order_id'] != self.current_order_id:
-    #                 continue  # Skip this order if it doesn't match the current order_id
+    #             if order_detail['user_id'] != self.current_user_id:
+    #                 continue  # Skip this order if it doesn't match the current user_id
 
     #             nama_minuman = order_detail['nama_minuman']
     #             pilihan_rasa = ', '.join(order_detail.get('rasa', []))
